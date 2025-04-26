@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 interface TopicCardProps {
   imageUrl: string;
   title: string;
-  prompt?: string; // Optional prompt line
+  prompt?: string; // Optional prompt line - used in 'simple' overlay
   tagText?: string; // Keep for backward compatibility if needed elsewhere
   tagIcon?: React.ReactNode; // Keep for backward compatibility
   tagColor?: string; // Keep for backward compatibility
@@ -19,7 +19,7 @@ interface TopicCardProps {
 const TopicCard: React.FC<TopicCardProps> = ({
   imageUrl,
   title,
-  prompt,
+  prompt, // Now using this for the 'simple' overlay second line
   tagText, // unused in 'simple' style
   tagIcon, // unused in 'simple' style
   tagColor, // unused in 'simple' style
@@ -78,6 +78,7 @@ const TopicCard: React.FC<TopicCardProps> = ({
                 <h3 className="text-white font-serif text-sm font-medium line-clamp-2 mb-1.5">{title}</h3>
                  <div className={clsx("topic-tag self-start", tagColor)} title={tagText}>
                     {tagIcon}
+                    {/* Assuming tagText is used as the label inside the tag */}
                     <span className="text-secondary text-xs font-medium">{tagText}</span>
                 </div>
             </div>

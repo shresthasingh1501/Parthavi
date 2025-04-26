@@ -4,10 +4,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Settings,
   History,
-  Languages, // Changed from Volume2
-  MessageCircle, // Keep for feedback
+  Languages,
+  MessageCircle,
   Share2,
-  ExternalLink, // Using this for Discord
+  ExternalLink,
   Shield,
   FileText,
   ChevronRight,
@@ -15,41 +15,59 @@ import {
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
 import { clsx } from 'clsx';
+import { useMediaQuery } from 'react-responsive'; // Import useMediaQuery
 
-// --- Prop to trigger share popup ---
+// --- Prop to trigger share popup and close mobile sidebar ---
 interface ProfilePanelProps {
     openSharePopup: () => void;
+    onCloseMobileSidebar: () => void; // Prop to close the mobile sidebar
 }
 
-const ProfilePanel: React.FC<ProfilePanelProps> = ({ openSharePopup }) => {
+const ProfilePanel: React.FC<ProfilePanelProps> = ({ openSharePopup, onCloseMobileSidebar }) => {
     const { userName } = useUser();
     const navigate = useNavigate();
+     const isMobile = useMediaQuery({ query: '(max-width: 768px)' }); // Detect mobile screen
 
-    const profileItems = [
-        { icon: Settings, label: 'Account', path: '/account', hasArrow: true },
-        { icon: History, label: 'Manage history', path: '/history', hasArrow: true },
-        { icon: Languages, label: 'Language settings', path: '/language-settings', hasArrow: true }, // Updated
-        { icon: MessageCircle, label: 'Give feedback', path: '/feedback', hasArrow: false }, // Keep as link for now
-        // Share is now a button handled below
-    ];
 
-    const communityItems = [
-        { icon: ExternalLink, label: 'Join our Discord community', href: 'https://discord.com', target: '_blank' } // Replace with actual Discord link
-    ];
-
-    const policyItems = [
-        { icon: Shield, label: 'Privacy policy', path: '/privacy' },
-        { icon: FileText, label: 'Terms of service', path: '/terms' }
-    ];
+    const handleLinkClick = (path: string) => {
+        navigate(path);
+        if (isMobile) {
+            onCloseMobileSidebar(); // Close sidebar on mobile after navigation
+        }
+    };
 
      const handleSignOut = () => {
         console.log("Signing out...");
         // Add actual sign out logic here (e.g., clear context, redirect)
         navigate('/'); // Example redirect
+         if (isMobile) {
+            onCloseMobileSidebar(); // Close sidebar on mobile after navigation
+        }
      }
 
+  const profileItems = [
+      // Modify to use handleLinkClick instead of direct Link component
+        { icon: Settings, label: 'Account', path: '/account', hasArrow: true },
+        { icon: History, label: 'Manage history', path: '/history', hasArrow: true },
+        { icon: Languages, label: 'Language settings', path: '/language-settings', hasArrow: true },
+        { icon: MessageCircle, label: 'Give feedback', path: '/feedback', hasArrow: false },
+        // Share is now a button handled below
+    ];
+
+    const communityItems = [
+        // Use a for external links, no close necessary as it opens a new tab
+        { icon: ExternalLink, label: 'Join our Discord community', href: 'https://discord.com', target: '_blank' }
+    ];
+
+    const policyItems = [
+         // Modify to use handleLinkClick instead of direct Link component
+        { icon: Shield, label: 'Privacy policy', path: '/privacy' },
+        { icon: FileText, label: 'Terms of service', path: '/terms' }
+    ];
+
+
   return (
-    <div className="p-4 h-full flex flex-col justify-between overflow-y-auto">
+    <div className="p-4 h-full flex flex-col justify-between overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent -mr-1 pr-1">
         <div>
             {/* Profile Header */}
             <div className="flex items-center gap-3 mb-5 pl-2">
@@ -68,9 +86,10 @@ const ProfilePanel: React.FC<ProfilePanelProps> = ({ openSharePopup }) => {
                  {profileItems.map((item) => {
                     const Icon = item.icon;
                     return (
-                        <Link
+                        // Use a button or div and onClick instead of Link directly
+                        <button
                            key={item.path}
-                           to={item.path}
+                           onClick={() => handleLinkClick(item.path)}
                            className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-secondary hover:bg-gray-100 transition-colors w-full text-sm"
                         >
                             <div className="flex items-center gap-3">
@@ -78,12 +97,17 @@ const ProfilePanel: React.FC<ProfilePanelProps> = ({ openSharePopup }) => {
                                  <span className="truncate">{item.label}</span>
                             </div>
                              {item.hasArrow && <ChevronRight size={16} className="text-gray-400" />}
-                        </Link>
+                        </button>
                     );
                  })}
                   {/* Share Button */}
                  <button
-                    onClick={openSharePopup} // Trigger popup
+                    onClick={() => {
+                        openSharePopup(); // Trigger popup
+                        if (isMobile) {
+                            onCloseMobileSidebar(); // Close sidebar on mobile after triggering popup
+                        }
+                    }}
                     className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-secondary hover:bg-gray-100 transition-colors w-full text-sm text-left"
                  >
                     <div className="flex items-center gap-3">
@@ -108,6 +132,8 @@ const ProfilePanel: React.FC<ProfilePanelProps> = ({ openSharePopup }) => {
                       >
                          <Icon size={20} strokeWidth={1.75} />
                          <span className="truncate">{item.label}</span>
+                          {/* Add an external link icon */}
+                          <ExternalLink size={14} className="text-gray-400 flex-shrink-0" />
                       </a>
                     );
                  })}
@@ -121,14 +147,14 @@ const ProfilePanel: React.FC<ProfilePanelProps> = ({ openSharePopup }) => {
                  {policyItems.map((item) => {
                     const Icon = item.icon;
                     return (
-                      <Link
+                      <button // Use button/onClick for internal navigation
                          key={item.path}
-                         to={item.path}
+                         onClick={() => handleLinkClick(item.path)}
                          className="flex items-center gap-3 px-3 py-2 rounded-lg text-secondary hover:bg-gray-100 transition-colors w-full text-sm"
                       >
                          <Icon size={20} strokeWidth={1.75} />
                          <span className="truncate">{item.label}</span>
-                      </Link>
+                      </button>
                     );
                  })}
              </div>

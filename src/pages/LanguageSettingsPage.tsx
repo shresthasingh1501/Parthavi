@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
 import { ArrowLeft } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useMediaQuery } from 'react-responsive'; // Import useMediaQuery
+
 
 // Wider range of languages including scripts for visual distinction
 const LANGUAGES = [
@@ -21,24 +23,28 @@ const LANGUAGES = [
 
 const LanguageSettingsPage: React.FC = () => {
     const navigate = useNavigate();
+    const isMobile = useMediaQuery({ query: '(max-width: 768px)' }); // Detect mobile screen
     const [selectedLanguageCode, setSelectedLanguageCode] = useState('en');
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null); // Ref for horizontal scroll on desktop
 
     // Function to scroll the selected item into the center (optional enhancement)
     useEffect(() => {
-        const selectedElement = scrollContainerRef.current?.querySelector(`[data-lang-code="${selectedLanguageCode}"]`);
-        if (selectedElement && scrollContainerRef.current) {
-             const containerWidth = scrollContainerRef.current.offsetWidth;
-             const elementLeft = (selectedElement as HTMLElement).offsetLeft;
-             const elementWidth = (selectedElement as HTMLElement).offsetWidth;
-             const scrollLeft = elementLeft - (containerWidth / 2) + (elementWidth / 2);
+        // Only attempt scrolling on desktop
+        if (!isMobile) {
+             const selectedElement = scrollContainerRef.current?.querySelector(`[data-lang-code="${selectedLanguageCode}"]`);
+            if (selectedElement && scrollContainerRef.current) {
+                 const containerWidth = scrollContainerRef.current.offsetWidth;
+                 const elementLeft = (selectedElement as HTMLElement).offsetLeft;
+                 const elementWidth = (selectedElement as HTMLElement).offsetWidth;
+                 const scrollLeft = elementLeft - (containerWidth / 2) + (elementWidth / 2);
 
-            scrollContainerRef.current.scrollTo({
-                left: scrollLeft,
-                behavior: 'smooth'
-            });
+                scrollContainerRef.current.scrollTo({
+                    left: scrollLeft,
+                    behavior: 'smooth'
+                });
+            }
         }
-    }, [selectedLanguageCode]); // Run when selection changes
+    }, [selectedLanguageCode, isMobile]); // Run when selection changes or mobile state changes
 
     const selectedLanguageName = LANGUAGES.find(l => l.code === selectedLanguageCode)?.name || 'English';
 
@@ -46,7 +52,7 @@ const LanguageSettingsPage: React.FC = () => {
         <PageTransition>
             <div className="min-h-screen flex flex-col p-6 md:p-10 bg-background">
                 {/* Header */}
-                <div className="flex items-center mb-8">
+                 <div className="flex items-center mb-8">
                     <button
                         onClick={() => navigate(-1)}
                         className="p-2 rounded-full hover:bg-gray-100 mr-3"
@@ -63,34 +69,54 @@ const LanguageSettingsPage: React.FC = () => {
                         Select your preferred language for Parthavi.
                      </p>
 
-                    {/* Apple-like Scrollable Language Selector */}
-                    {/* Outer container to help with alignment/centering if needed */}
-                    <div className="w-full max-w-xl mx-auto">
-                        {/* Scroll container with snap properties */}
-                        <div
-                           ref={scrollContainerRef}
-                           className="flex space-x-3 overflow-x-auto pb-4 px-[calc(50%-40px)] /* Padding L/R to allow edge items to center */
-                                      whitespace-nowrap scrollbar-hide snap-x snap-mandatory"
-                        >
+                    {/* Conditional Language Selector Layout */}
+                    {isMobile ? (
+                        // Mobile: Vertical List Layout
+                        <div className="w-full max-w-xs mx-auto space-y-4">
                             {LANGUAGES.map((lang) => (
                                 <button
                                     key={lang.code}
-                                    data-lang-code={lang.code} // Add data attribute for scrolling effect
                                     onClick={() => setSelectedLanguageCode(lang.code)}
-                                    // Snap alignment for each button
                                     className={clsx(
-                                        "snap-center flex-shrink-0 px-6 py-3 rounded-full text-base font-medium transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/50",
+                                        "w-full px-6 py-3 rounded-full text-base font-medium transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/50",
                                         selectedLanguageCode === lang.code
-                                            ? 'bg-primary text-white shadow-md scale-105' // Enhanced selected style
-                                            : 'bg-gray-100 text-secondary hover:bg-gray-200/80 scale-95 opacity-70 hover:opacity-100' // Deselected style
+                                            ? 'bg-primary text-white shadow-md'
+                                            : 'bg-gray-100 text-secondary hover:bg-gray-200/80'
                                     )}
-                                    style={{ minWidth: '80px' }} // Ensure minimum width for snapping
                                 >
                                     {lang.name}
                                 </button>
                             ))}
                         </div>
-                    </div>
+                    ) : (
+                        // Desktop: Horizontal Scroll Layout
+                        <div className="w-full max-w-xl mx-auto">
+                            <div
+                               ref={scrollContainerRef}
+                               className="flex space-x-3 overflow-x-auto pb-4 px-[calc(50%-40px)] /* Padding L/R to allow edge items to center */
+                                          whitespace-nowrap scrollbar-hide snap-x snap-mandatory"
+                            >
+                                {LANGUAGES.map((lang) => (
+                                    <button
+                                        key={lang.code}
+                                        data-lang-code={lang.code} // Add data attribute for scrolling effect
+                                        onClick={() => setSelectedLanguageCode(lang.code)}
+                                        // Snap alignment for each button
+                                        className={clsx(
+                                            "snap-center flex-shrink-0 px-6 py-3 rounded-full text-base font-medium transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/50",
+                                            selectedLanguageCode === lang.code
+                                                ? 'bg-primary text-white shadow-md scale-105' // Enhanced selected style
+                                                : 'bg-gray-100 text-secondary hover:bg-gray-200/80 scale-95 opacity-70 hover:opacity-100' // Deselected style
+                                        )}
+                                        style={{ minWidth: '80px' }} // Ensure minimum width for snapping
+                                    >
+                                        {lang.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
 
                     <p className="text-sm text-gray-500 mt-12 px-1 text-center">
                         Currently selected: <span className="font-semibold">{selectedLanguageName}</span>

@@ -28,19 +28,24 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
       variants={messageBlockVariants}
       initial="hidden"
       animate="visible"
+      // Added responsive padding pl/pr
       className={clsx(
           'flex w-full mb-4 md:mb-5',
-          isUser ? 'justify-end pl-10 sm:pl-20' : 'justify-start pr-10 sm:pr-20'
+          isUser ? 'justify-end pl-6 md:pl-10 lg:pl-20' : 'justify-start pr-6 md:pr-10 lg:pr-20' // Adjusted padding
         )}
     >
         {/* User message bubble: Use new secondary text, kept custom bg */}
         {isUser ? (
+          // Max width is responsive
           <div className="bg-[#F7F1E8] rounded-lg px-4 py-2.5 text-secondary shadow-sm max-w-[85%] sm:max-w-[75%]">
+            {/* Text size is responsive */}
             <p className="text-sm md:text-base whitespace-pre-wrap break-words">{message}</p>
           </div>
         ) : (
           // AI message text: Use new secondary text
+           // Max width is responsive
           <div className="max-w-[85%] sm:max-w-[75%]">
+             {/* Text size is responsive */}
              <p
                 className="text-sm md:text-base text-secondary whitespace-pre-wrap break-words min-h-[1.5em]" // Changed text color
                 style={{ lineHeight: '1.6' }}
