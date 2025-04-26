@@ -21,6 +21,80 @@ h1, h2, h3, h4, h5 {
   .animate-pulse {
     animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
+  .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+  }
+  .scrollbar-hide {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+  }
+}
+
+/* Replace custom button styles with direct CSS properties instead of @apply */
+.button-action {
+  background-color: #8BC34A; /* Use the hex value directly */
+  color: white;
+  font-weight: 500;
+  padding: 0.75rem 2rem;
+  border-radius: 9999px;
+  transition-property: all;
+  transition-duration: 300ms;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.button-action:hover {
+  background-color: rgba(139, 195, 74, 0.9); /* 90% opacity of the same color */
+}
+
+.button-action:focus {
+  outline: none;
+  ring: 2px solid #8BC34A;
+  ring-opacity: 50%;
+}
+
+/* --- New Brand Color Button (Mauve) --- */
+.button-brand {
+  background-color: #8D4672; /* Use primary hex value directly */
+  color: white;
+  font-weight: 500;
+  padding: 0.75rem 2rem;
+  border-radius: 9999px;
+  transition-property: all;
+  transition-duration: 300ms;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.button-brand:hover {
+  background-color: rgba(141, 70, 114, 0.9);
+}
+
+.button-brand:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(141, 70, 114, 0.5);
+}
+
+.topic-tag {
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: #333333;
+}
+
+.input-field {
+  background-color: rgba(255, 255, 255, 0.8);
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  width: 100%;
+}
+
+.input-field:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(141, 70, 114, 0.5);
 }
 
 .topic-card {
@@ -29,34 +103,25 @@ h1, h2, h3, h4, h5 {
 
 .topic-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08); /* Softer shadow */
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
 }
 
-.button-primary {
-  @apply bg-primary text-white font-medium py-3 px-8 rounded-full transition duration-300 hover:bg-opacity-90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-50;
-}
-
-.topic-tag {
-  @apply px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1.5; /* Adjusted padding/gap */
-}
-
-.input-field {
-  @apply bg-white bg-opacity-80 border border-gray-300 rounded-lg py-3 px-4 w-full focus:outline-none focus:ring-2 focus:ring-primary;
-}
-
-/* Optional: Scrollbar styling for a cleaner look */
+/* Optional: Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background-color: rgba(0, 0, 0, 0.15);
   border-radius: 10px;
   border: 3px solid transparent;
 }
+
 ::-webkit-scrollbar-thumb:hover {
-   background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(0, 0, 0, 0.3);
 }

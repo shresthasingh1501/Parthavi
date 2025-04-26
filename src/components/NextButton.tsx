@@ -14,7 +14,8 @@ const NextButton: React.FC<NextButtonProps> = ({ to, text = 'Next' }) => {
     <motion.button
       whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.98 }}
-      className="button-primary w-full max-w-sm mx-auto block"
+      // Use the new green action button style
+      className="button-action w-full max-w-sm mx-auto block"
       onClick={() => navigate(to)}
     >
       {text}

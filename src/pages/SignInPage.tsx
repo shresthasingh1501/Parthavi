@@ -20,14 +20,16 @@ const SignInPage = () => {
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
               <MessageSquare className="w-8 h-8 text-primary" />
             </div>
-            
-            <h1 className="text-4xl md:text-5xl font-serif text-secondary mb-6">
+
+            <h1 className="text-4xl md:text-5xl font-serif text-secondary mb-4"> {/* Reduced margin bottom */}
               Welcome to Parthavi
             </h1>
-            
+
+            {/* --- Updated Sub-headline --- */}
             <p className="text-lg text-secondary/80 mb-8">
-              Your personal career guidance assistant for Indian women
+              Empowering  Women in Their Careers
             </p>
+            {/* --- End Update --- */}
           </div>
 
           <div className="space-y-4">
@@ -37,9 +39,9 @@ const SignInPage = () => {
               onClick={() => handleSignIn('google')}
               className="w-full flex items-center justify-center gap-3 bg-white text-gray-700 px-6 py-3 rounded-full shadow-md hover:shadow-lg transition-all duration-200"
             >
-              <img 
-                src="https://www.google.com/favicon.ico" 
-                alt="Google" 
+              <img
+                src="https://www.google.com/favicon.ico"
+                alt="Google"
                 className="w-5 h-5"
               />
               <span className="font-medium">Continue with Google</span>
@@ -51,9 +53,9 @@ const SignInPage = () => {
               onClick={() => handleSignIn('linkedin')}
               className="w-full flex items-center justify-center gap-3 bg-[#0A66C2] text-white px-6 py-3 rounded-full shadow-md hover:shadow-lg transition-all duration-200"
             >
-              <img 
-                src="https://www.linkedin.com/favicon.ico" 
-                alt="LinkedIn" 
+              <img
+                src="https://www.linkedin.com/favicon.ico"
+                alt="LinkedIn"
                 className="w-5 h-5"
               />
               <span className="font-medium">Continue with LinkedIn</span>

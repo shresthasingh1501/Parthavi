@@ -1,3 +1,4 @@
+// src/components/chat/Sidebar.tsx
 import React from 'react';
 import { clsx } from 'clsx';
 import {
@@ -14,9 +15,10 @@ interface SidebarProps {
   isExpanded: boolean;
   activePanel: ActivePanelType;
   onPanelChange: (panel: ActivePanelType) => void;
+  openSharePopup: () => void; // Add prop here
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isExpanded, activePanel, onPanelChange }) => {
+const Sidebar: React.FC<SidebarProps> = ({ isExpanded, activePanel, onPanelChange, openSharePopup }) => { // Destructure prop
 
   const menuItems: { name: ActivePanelType; icon: React.ElementType; label: string }[] = [
     { name: 'discover', icon: Sparkles, label: 'Discover' },
@@ -31,7 +33,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isExpanded, activePanel, onPanelChang
       case 'threads':
         return <ThreadsPanelSidebar />;
       case 'profile':
-        return <ProfilePanel />;
+        // Pass the function ONLY to ProfilePanel
+        return <ProfilePanel openSharePopup={openSharePopup} />;
       default:
         return null;
     }
@@ -41,7 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isExpanded, activePanel, onPanelChang
     <div
       className={clsx(
         "bg-background h-screen flex transition-all duration-300 ease-in-out flex-shrink-0 relative border-r border-gray-200",
-        isExpanded ? 'w-80' : 'w-24' // Adjusted collapsed width for labels
+        isExpanded ? 'w-[480px]' : 'w-24' // Keep the increased width
       )}
     >
         {/* Icon Buttons Column */}
@@ -57,7 +60,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isExpanded, activePanel, onPanelChang
                         className={clsx(
                            "flex flex-col items-center justify-center py-2 rounded-lg text-secondary transition-colors w-[76px] h-auto min-h-[60px]",
                            isActive ? 'bg-white shadow-sm' : 'hover:bg-gray-100',
-                           isSelectedCollapsed && 'bg-gray-100' // Highlight selected even when collapsed
+                           isSelectedCollapsed && 'bg-gray-100'
                         )}
                         title={item.label}
                     >
@@ -76,7 +79,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isExpanded, activePanel, onPanelChang
         {/* Expanded Panel Content */}
         <div
             className={clsx(
-                "flex-1 flex flex-col overflow-hidden transition-opacity duration-200 ease-in-out absolute top-0 left-24 right-0 bottom-0 h-full bg-background", // Start from left-24
+                "flex-1 flex flex-col overflow-hidden transition-opacity duration-200 ease-in-out absolute top-0 left-24 right-0 bottom-0 h-full bg-background",
                 isExpanded ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none delay-100'
             )}
         >

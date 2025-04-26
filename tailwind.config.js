@@ -4,11 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#FDF6EC',
-        primary: '#8D4672',
-        secondary: '#0D513C',
-        accent: '#F3D9E2',
-        muted: '#E5E6E7',
+        // --- Updated Palette based on HerKey ---
+        background: '#F5F5F5', // Light grey panel background
+        primary: '#8D4672',    // Mauve/Purple brand color
+        secondary: '#333333',  // Dark grey primary text
+        accent: '#F3D9E2',     // Light pink highlight/tag bg
+        muted: '#888888',      // Medium grey secondary text
+        action: '#8BC34A',     // <<<<--- Green action button color (Ensure this line exists)
+        // --- End Updated Palette ---
       },
       fontFamily: {
         serif: ['"EB Garamond"', 'serif'],
@@ -30,5 +33,7 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    require('@tailwindcss/typography'),
+  ],
 };
