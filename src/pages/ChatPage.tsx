@@ -1,10 +1,12 @@
+// src/pages/ChatPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ChatInput from '../components/chat/ChatInput';
+// Ensure using the simplified ChatMessage component below
 import ChatMessage from '../components/chat/ChatMessage';
 import Sidebar from '../components/chat/Sidebar';
 import { useUser } from '../context/UserContext';
-import { AnimatePresence } from 'framer-motion';
-import { clsx } from 'clsx';
+import { AnimatePresence, motion } from 'framer-motion'; // Keep motion for message animation
+import { clsx } from 'clsx'; // For conditional classes
 
 export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
 
@@ -18,73 +20,102 @@ interface Message {
 const ChatPage = () => {
   const { userName } = useUser();
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
-  const [activePanel, setActivePanel] = useState<ActivePanelType>(null);
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
+  const [activePanel, setActivePanel] = useState<ActivePanelType>('discover');
   const [isResponding, setIsResponding] = useState(false);
 
-  const initialMessageText = `Hey ${userName || 'there'} 👋 What can I help you with today? 😎`;
+  // State: List of messages
+  const [messages, setMessages] = useState<Message[]>([]);
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'initial-bot-message',
-      text: initialMessageText,
-      isUser: false,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
+  // Set initial message
+  useEffect(() => {
+    const initialName = userName || 'there';
+    const initialText = `Ok ${initialName}. What did you want to talk about? Ask me for advice, for answers, or let’s talk about whatever’s on your mind.`;
+    setMessages([
+        {
+            id: 'initial-bot-message-start',
+            text: initialText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        }
+    ]);
+  }, [userName]);
 
+  // Scrolling Logic
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
      if (chatContainerRef.current) {
-         chatContainerRef.current.scrollTo({
-            top: chatContainerRef.current.scrollHeight,
-            behavior: behavior
-         });
+         // Delay slightly to ensure DOM update, especially after adding messages
+         setTimeout(() => {
+             if (chatContainerRef.current) {
+                chatContainerRef.current.scrollTo({
+                    top: chatContainerRef.current.scrollHeight,
+                    behavior: behavior
+                });
+             }
+         }, 50);
        }
   }, []);
+
+  // Scroll when messages are added (but not on initial load)
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    if (!isInitialMount.current) {
+        // Use 'auto' for user message, 'smooth' for AI (can simplify to just 'smooth')
+        scrollToBottom('smooth');
+    } else {
+        isInitialMount.current = false;
+    }
+  }, [messages.length, scrollToBottom]); // Depend on message count
+
 
   const handleSendMessage = useCallback((text: string) => {
     if (isResponding) return;
 
+    const trimmedText = text.trim();
+    if (!trimmedText) return;
+
     setIsResponding(true);
 
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text,
-      isUser: true,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    // 1. Add User's Message
+    const userMessage: Message = {
+        id: Date.now().toString() + '-user',
+        text: trimmedText,
+        isUser: true,
+        timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     };
+    setMessages(prev => [...prev, userMessage]);
 
-    setMessages(prev => [...prev, newMessage]);
-    requestAnimationFrame(() => scrollToBottom('auto'));
+    // 2. Prepare AI Response (Static long message)
+    const aiResponseText = `Based on the screenshots you shared, the HerKey website primarily uses these colors:
 
 
-    const responseDelay = 800 + Math.random() * 500;
-    setTimeout(() => {
-      const responses = [
-         `Okay, let's talk about "${text.substring(0, 20)}". What specific aspects are you curious about? 🤔`,
-         `Interesting topic: "${text.substring(0, 20)}"! Could you elaborate a bit on what you'd like to know?`,
-         `Got it. Regarding "${text.substring(0, 20)}", I can help with career advice, job search info, and skill development. What's on your mind?`,
-         `Sure thing! Let's dive into "${text.substring(0, 20)}". What are your main questions? 💡`
-      ];
-      const aiResponseText = responses[Math.floor(Math.random() * responses.length)];
+Color Purpose	Hex Code	Description
+Primary Background Color (Dark Mauve)	#8D4672	Deep mauve/purple shade
+Secondary Background (Light Grey)	#F5F5F5	Very light grey for panels
+Accent Color (Green Button)	#8BC34A	Fresh green for "Create", "Apply", "Update" buttons
+Text Primary Color (Dark Grey)	#333333	For primary text
+Light Text / Labels (Soft Grey)	#888888	For secondary text, like "followers"
+Highlight Tags (Soft Pink)	#F3D9EB	Light pink for tags like "Newly Added"
+Would you like me to also pull a complete extended palette including hover states and border colors? 🚀
+(They seem to use a few slight variations too.)`;
 
-      const aiResponse: Message = {
-        id: (Date.now() + 1).toString(),
+    const aiMessage: Message = {
+        id: Date.now().toString() + '-ai',
         text: aiResponseText,
         isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, aiResponse]);
-      requestAnimationFrame(() => scrollToBottom('smooth'));
-    }, responseDelay);
+        timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    };
 
-  }, [isResponding, userName, scrollToBottom]);
+    // 3. Add AI's Message Immediately (using functional update)
+    setMessages(prev => [...prev, aiMessage]);
 
+    // 4. Re-enable input almost immediately
+    const timer = setTimeout(() => {
+        setIsResponding(false);
+    }, 50);
+    // No cleanup needed for such short timer
 
-  useEffect(() => {
-     const timer = setTimeout(() => scrollToBottom('auto'), 100);
-     return () => clearTimeout(timer);
-  }, [scrollToBottom]);
+  }, [isResponding]); // Removed scrollToBottom dependency here, handled by useEffect
 
 
   const handlePanelChange = (panel: ActivePanelType) => {
@@ -97,10 +128,8 @@ const ChatPage = () => {
     }
   };
 
-   const handleAnimationComplete = useCallback(() => {
-      setIsResponding(false);
-   }, []);
-
+  // Determine if we are in the initial state (only 1 message)
+  const isInitialState = messages.length <= 1;
 
   return (
     <div className="flex h-screen bg-background text-secondary overflow-hidden">
@@ -111,24 +140,38 @@ const ChatPage = () => {
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Ensure overflow-y-auto and flex-1 are set for scrolling */}
-        <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 md:px-10 lg:px-20 pt-10 pb-5 scroll-smooth">
-           <div className="max-w-3xl mx-auto"> {/* Content centered */}
+
+        {/* Message container: Apply conditional classes for initial positioning */}
+        <div
+            ref={chatContainerRef}
+            className={clsx(
+                'flex-1 overflow-y-auto px-4 md:px-10 lg:px-20 pt-10 scroll-smooth',
+                // Conditional classes for initial centering:
+                isInitialState && 'flex flex-col justify-center pb-32' // Use desired padding, e.g., pb-32
+            )}
+        >
+           {/* Inner wrapper for max-width */}
+           <div className={clsx(
+               "max-w-3xl mx-auto w-full",
+               // Center content ONLY when in initial state
+               isInitialState && 'flex flex-col items-center'
+            )}>
+              {/* Always render the list from messages state */}
+              {/* Use AnimatePresence for individual message fade-in */}
               <AnimatePresence initial={false}>
-                 {messages.map((message, index) => (
+                 {messages.map((message) => (
                    <ChatMessage
-                     key={message.id}
+                     key={message.id} // Use unique ID for key
                      message={message.text}
                      isUser={message.isUser}
-                     isLastMessage={index === messages.length - 1}
-                     onAnimationComplete={(!message.isUser && index === messages.length - 1) ? handleAnimationComplete : undefined}
                    />
                  ))}
               </AnimatePresence>
             </div>
         </div>
 
-        <div className="px-4 md:px-10 lg:px-20 pb-6 pt-2 bg-background">
+        {/* Input container */}
+        <div className="px-4 md:px-10 lg:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60">
            <div className="max-w-3xl mx-auto">
              <ChatInput
                 onSendMessage={handleSendMessage}

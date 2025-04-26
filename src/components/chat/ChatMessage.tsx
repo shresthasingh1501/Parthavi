@@ -1,100 +1,57 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+// src/components/chat/ChatMessage.tsx
+// Use the simplified version WITHOUT internal delays
+import React from 'react';
+import { motion } from 'framer-motion'; // Import motion
 import { clsx } from 'clsx';
 
 interface ChatMessageProps {
   message: string;
   isUser: boolean;
-  isLastMessage?: boolean;
-  onAnimationComplete?: () => void;
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({
     message,
     isUser,
-    isLastMessage = false,
-    onAnimationComplete
 }) => {
-  // State to track when the internal "typing" is complete for AI message
-  const [isReadyToDisplay, setIsReadyToDisplay] = useState(isUser || !isLastMessage);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const animationCompletedRef = useRef(false);
 
-  useEffect(() => {
-    // Reset state for new messages or non-target messages
-    setIsReadyToDisplay(isUser || !isLastMessage);
-    animationCompletedRef.current = false;
-    if (intervalRef.current) clearInterval(intervalRef.current);
-
-    // Simulate internal typing only for the last AI message
-    if (!isUser && isLastMessage) {
-        const characters = message.split('');
-        // Calculate estimated typing duration based on message length
-        const typingDuration = characters.length * 25; // Same speed as before
-
-        // Set a timeout to mark as ready after the estimated duration
-        intervalRef.current = setTimeout(() => {
-            setIsReadyToDisplay(true); // Trigger the fade-in animation
-            if (onAnimationComplete && !animationCompletedRef.current) {
-                onAnimationComplete();
-                animationCompletedRef.current = true;
-            }
-        }, typingDuration);
-    }
-
-    // Cleanup timeout on unmount or before re-running
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [message, isUser, isLastMessage, onAnimationComplete]);
-
-
-  // Animation for the message block itself
+  // Simple fade-in animation for the message block
   const messageBlockVariants = {
-    hidden: { opacity: 0, y: 5 },
+    hidden: { opacity: 0, y: 8 },
     visible: {
       opacity: 1,
       y: 0,
-      transition: { duration: 0.35, ease: [0.4, 0, 0.2, 1] }
+      transition: { duration: 0.3, ease: "easeOut" }
     },
   };
 
-  // Animation for the text content fading in
-  const textFadeInVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1, transition: { duration: 0.4, delay: 0.05 } }, // Slight delay after block appears
-  };
-
   return (
+    // Apply motion directly to the message block container
     <motion.div
-      key={message}
+      key={message.substring(0,10) + (isUser ? '-user' : '-ai')} // Key helps framer-motion identify element
       variants={messageBlockVariants}
       initial="hidden"
       animate="visible"
-      layout="position"
-      className={clsx('flex w-full mb-4 md:mb-5', isUser ? 'justify-end' : 'justify-start')}
+      // layout // Optional: enable if list reordering/insertions look jumpy
+      className={clsx(
+          'flex w-full mb-4 md:mb-5', // Standard bottom margin
+          isUser ? 'justify-end pl-10 sm:pl-20' : 'justify-start pr-10 sm:pr-20' // Align left/right
+        )}
     >
+        {/* --- Content Styling --- */}
         {isUser ? (
-          // User message block
-          <div className="bg-muted/70 rounded-lg px-4 py-2.5 text-secondary shadow-sm max-w-[85%] sm:max-w-[75%]">
+          // User message bubble styling
+          <div className="bg-[#F7F1E8] rounded-lg px-4 py-2.5 text-secondary shadow-sm max-w-[85%] sm:max-w-[75%]">
             <p className="text-sm md:text-base whitespace-pre-wrap break-words">{message}</p>
           </div>
         ) : (
-          // AI message block
-          <div className="px-1 py-1 max-w-[85%] sm:max-w-[75%]">
-            {/* Use motion.p for the text fade-in, controlled by isReadyToDisplay */}
-            <motion.p
-                key="ai-text-content" // Key for Framer Motion
-                variants={textFadeInVariants}
-                initial="hidden"
-                animate={isReadyToDisplay ? "visible" : "hidden"}
-                className="text-sm md:text-base text-secondary whitespace-pre-wrap break-words min-h-[1.5em]" // min-h prevents jumpiness
+          // AI message text styling
+          <div className="max-w-[85%] sm:max-w-[75%]">
+             <p
+                className="text-sm md:text-base text-[#3D3A3A] whitespace-pre-wrap break-words min-h-[1.5em]"
+                style={{ lineHeight: '1.6' }}
             >
-                {/* Render the full message text */}
                 {message}
-            </motion.p>
+            </p>
           </div>
         )}
     </motion.div>
