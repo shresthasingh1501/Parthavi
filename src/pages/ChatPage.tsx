@@ -8,6 +8,7 @@ import { useMediaQuery } from 'react-responsive';
 import {
     GoogleGenAI,
     Content,
+    // Part, // Part might not be needed directly if using Content structure
     Role,
     GenerateContentResponse,
     SystemInstruction,
@@ -39,6 +40,7 @@ type DisplayMessage = Pick<DbMessage, 'id' | 'role' | 'created_at' | 'content'> 
     isToolCall?: boolean;
     toolResultContent?: any; // Store serialized FunctionResponse
 };
+// Added metadata for potential DB storage of tool info
 type MessagePayload = Omit<DbMessage, 'id' | 'created_at' | 'updated_at'> & { metadata?: any };
 type PlaceholderType = 'initial' | 'new_thread' | null;
 type LinkupSearchResult = {
@@ -52,9 +54,9 @@ const SIDEBAR_ICON_WIDTH_DESKTOP = 'md:w-24';
 const SIDEBAR_WIDTH_MOBILE_OPEN = 'w-[85vw] max-w-sm';
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const LINKUP_API_KEY = import.meta.env.VITE_LINKUP_API_KEY;
-const MODEL_NAME = "gemini-2.0-flash";
+const MODEL_NAME = "gemini-2.0-flash"; // Or your preferred model supporting function calling
 
-// --- System Instruction ---
+// --- System Instruction (Corrected for build) ---
 const SYSTEM_INSTRUCTION_TEXT = `
 **Persona & Role:**
 You are Parthavi, an advanced AI career advisor chatbot. Your core mission is to empower Indian women by providing exceptional, personalized, and culturally sensitive guidance for their professional journeys. You act as a knowledgeable, supportive, and encouraging mentor figure.
@@ -187,7 +189,7 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
         // Include the model's *request* to call a function
         else if (msg.isToolCall && msg.content && !msg.toolResultContent && !msg.isPending && !msg.isError) {
             try {
-                const funcCall: FunctionCall = JSON.parse(msg.content);
+                const funcCall: FunctionCall = JSON.parse(msg.content); // Content holds serialized FunctionCall
                 console.log(`[DEBUG] formatChatHistoryForGemini: Adding FUNCTION_CALL part for message ${index}`, funcCall);
                 history.push({ role: 'model', parts: [{ functionCall: funcCall }] });
             } catch (e) { console.error("[DEBUG] formatChatHistoryForGemini: Failed to parse stored FunctionCall:", msg.content, e); }
@@ -195,7 +197,7 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
         // Include the *result* of the function call provided back *to* the model
         else if (msg.toolResultContent && !msg.isPending && !msg.isError) {
             try {
-                const funcResponse: FunctionResponse = JSON.parse(msg.toolResultContent);
+                const funcResponse: FunctionResponse = JSON.parse(msg.toolResultContent); // toolResultContent holds serialized FunctionResponse
                 console.log(`[DEBUG] formatChatHistoryForGemini: Adding FUNCTION_RESPONSE part for message ${index}`, funcResponse);
                 history.push({ role: 'user', parts: [{ functionResponse: funcResponse }] });
             } catch (e) { console.error("[DEBUG] formatChatHistoryForGemini: Failed to parse stored FunctionResponse:", msg.toolResultContent, e); }
@@ -203,9 +205,8 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
              console.log(`[DEBUG] formatChatHistoryForGemini: SKIPPING message ${index} from history (pending, error, or invalid state).`);
         }
     });
-    console.log("[DEBUG] formatChatHistoryForGemini: Final history object:", history);
-    // Final filter (should ideally be unnecessary if logic above is correct)
-    return history.filter(content => content.parts && content.parts.length > 0 && (content.parts[0].text || content.parts[0].functionCall || content.parts[0].functionResponse));
+    console.log("[DEBUG] formatChatHistoryForGemini: Final history object:", JSON.stringify(history, null, 2)); // Log final history
+    return history;
 };
 
 
@@ -218,8 +219,8 @@ const ChatPage = () => {
     const [currentThreadId, setCurrentThreadId] = useState<string | null>(location.state?.threadId || null);
     const [messages, setMessages] = useState<DisplayMessage[]>([]);
     const [inputMessage, setInputMessage] = useState('');
-    const [isResponding, setIsResponding] = useState(false);
-    const [chatLoading, setChatLoading] = useState(true);
+    const [isResponding, setIsResponding] = useState(false); // General loading state for user input lock
+    const [chatLoading, setChatLoading] = useState(true); // Specific to initial thread load
     const [apiError, setApiError] = useState<string | null>(null);
     const [createThreadError, setCreateThreadError] = useState<string | null>(null);
     const [placeholderType, setPlaceholderType] = useState<PlaceholderType>(null);
@@ -229,7 +230,7 @@ const ChatPage = () => {
     const [isSharePopupOpen, setIsSharePopupOpen] = useState(false);
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const sidebarRef = useRef<HTMLDivElement>(null);
-    const isInitialMount = useRef(true);
+    const isInitialMount = useRef(true); // To track first render cycle
 
     // --- Callbacks ---
     const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -273,7 +274,7 @@ const ChatPage = () => {
     }, [session?.user?.id, navigate, location.pathname]);
 
 
-    // --- Main Send Message Logic ---
+    // --- Main Send Message Logic (FIXED Stream Iteration) ---
     const handleSendMessage = useCallback(async (text: string) => {
         console.log("[DEBUG] handleSendMessage: Called with text:", text.substring(0, 50) + '...');
         if (!genAI) { console.error("[DEBUG] handleSendMessage: AI Client not configured."); setApiError("AI Client not configured."); return; }
@@ -296,19 +297,17 @@ const ChatPage = () => {
             timestamp: "", created_at: new Date().toISOString()
         };
         const nextMessages = [...messages, optimisticUserMsg];
-        console.log("[DEBUG] handleSendMessage: Prepared nextMessages array (adding user msg). Count:", nextMessages.length);
-
-        // Calculate history based on this next state *before* setting state
+        console.log("[DEBUG] handleSendMessage: Prepared nextMessages array. Count:", nextMessages.length);
         let currentHistory = formatChatHistoryForGemini(nextMessages);
-        console.log("[DEBUG] handleSendMessage: Calculated initial history for API call. Length:", currentHistory.length);
+        console.log("[DEBUG] handleSendMessage: Calculated initial history. Length:", currentHistory.length);
 
         // Update UI state with the user message
         setMessages(nextMessages);
         scrollToBottom('smooth');
 
-        if (currentHistory.length === 0) {
-             console.error("[DEBUG] handleSendMessage: CRITICAL - History is empty after adding user message and formatting. Aborting.");
-             setApiError("Internal error preparing message history."); setIsResponding(false); return;
+        if (currentHistory.length === 0 && nextMessages.length > 0) { // Check specifically if formatting failed despite having messages
+             console.error("[DEBUG] handleSendMessage: CRITICAL - History formatting resulted in empty array despite having messages. Aborting.", nextMessages);
+             setApiError("Internal error formatting message history."); setIsResponding(false); return;
         }
 
         // Save user message to DB
@@ -323,42 +322,35 @@ const ChatPage = () => {
             while (loopCount < 5) {
                 loopCount++;
                 console.log(`[DEBUG] handleSendMessage: --- Interaction Loop Turn ${loopCount} ---`);
-                console.log(`[DEBUG] handleSendMessage: Calling Gemini API. History Length: ${currentHistory.length}`, JSON.stringify(currentHistory, null, 2)); // Log full history being sent
+                console.log(`[DEBUG] handleSendMessage: Calling Gemini API. History Length: ${currentHistory.length}`, JSON.stringify(currentHistory, null, 2));
 
                 // 2. Prepare and Call Gemini API
                 const requestPayload = {
-                    model: MODEL_NAME,
+                    // model: MODEL_NAME, // Model specified when getting client usually, but double-check SDK docs if issues persist
                     contents: currentHistory,
                     tools: [linkupSearchTool],
                     systemInstruction: systemInstructionObject,
+                    // generationConfig: { candidateCount: 1 } // Optional: ensure only one candidate
                 };
 
-                if (!genAI) throw new Error("Gemini AI Client lost mid-process."); // Should not happen if initial check passed
+                if (!genAI) throw new Error("Gemini AI Client lost mid-process.");
 
                 console.log("[DEBUG] handleSendMessage: Awaiting genAI.models.generateContentStream...");
-                const resultPromise = genAI.models.generateContentStream(requestPayload);
-                const result = await resultPromise;
-                console.log("[DEBUG] handleSendMessage: API Call Result Object:", result);
+                const result = await genAI.models.generateContentStream(requestPayload); // Result IS the async iterator
+                console.log("[DEBUG] handleSendMessage: API Call Result Object (Iterator):", result);
 
-                // *** CRITICAL STREAM CHECK ***
-                if (!result || !result.stream || typeof result.stream[Symbol.asyncIterator] !== 'function') {
-                    console.error("[DEBUG] handleSendMessage: Error - result.stream is not a valid async iterator.", result);
-                    const finalResponse = result?.response ? await result.response : null;
-                    console.error("[DEBUG] handleSendMessage: Final Response object (if stream failed):", finalResponse);
-                    const blockReason = finalResponse?.promptFeedback?.blockReason;
-                    const finishReason = finalResponse?.candidates?.[0]?.finishReason;
-                    let errMsg = "API did not return a valid stream.";
-                    if (blockReason?.message) errMsg = `API blocked: ${blockReason.message}`;
-                    else if (blockReason) errMsg = `API blocked request (Reason: ${blockReason.reason})`;
-                    else if (finishReason && finishReason !== "STOP") errMsg = `API finished unexpectedly (Reason: ${finishReason})`;
-                    // ... other checks from previous version ...
-                    throw new Error(errMsg);
+                // *** VALIDATION (Optional but good): Check if the result is actually iterable ***
+                if (!result || typeof result[Symbol.asyncIterator] !== 'function') {
+                     console.error("[DEBUG] handleSendMessage: Error - API result is not an async iterator as expected.", result);
+                     const errorResponse = (result as any)?.response || result; // Best guess at potential error obj
+                     console.error("[DEBUG] handleSendMessage: Raw error object (if available):", errorResponse);
+                     throw new Error("API did not return a valid async iterator.");
                 }
-                 console.log("[DEBUG] handleSendMessage: result.stream appears valid. Proceeding with stream processing.");
-                // ******************************
+                console.log("[DEBUG] handleSendMessage: API result is iterable. Proceeding.");
+                 // *****************************************************************************
 
                 // 3. Process Response Stream / Function Call
-                let aggregatedResponse: GenerateContentResponse | null = null;
+                let aggregatedResponse: GenerateContentResponse | null = null; // Store aggregated final chunk details
                 let accumulatedText = "";
                 let detectedFunctionCall: FunctionCall | null = null;
                 const tempAiMsgId = `temp-ai-${Date.now()}-turn-${loopCount}`;
@@ -368,11 +360,12 @@ const ChatPage = () => {
                 setMessages(prev => { latestMessagesState = [...prev, pendingAiMsg]; return latestMessagesState; });
                 scrollToBottom('smooth');
 
-                console.log("[DEBUG] handleSendMessage: Starting stream iteration...");
-                for await (const chunk of result.stream) {
+                console.log("[DEBUG] handleSendMessage: Starting async iteration directly over result...");
+                // *** Iterate directly over the result object (which is the async iterator) ***
+                for await (const chunk of result) {
                     console.log("[DEBUG] handleSendMessage: Received stream chunk:", chunk);
-                    // ... (stream aggregation logic - simplified log)
-                    if (!aggregatedResponse) aggregatedResponse = { ...chunk }; else { if (chunk.candidates) aggregatedResponse.candidates = chunk.candidates; if (chunk.promptFeedback) aggregatedResponse.promptFeedback = chunk.promptFeedback; }
+                    // Aggregate the chunk into a response-like structure for easier access later
+                     if (!aggregatedResponse) aggregatedResponse = { ...chunk }; else { if (chunk.candidates) aggregatedResponse.candidates = chunk.candidates; if (chunk.promptFeedback) aggregatedResponse.promptFeedback = chunk.promptFeedback; }
 
                     const candidate = chunk?.candidates?.[0];
                     const funcCallPart = candidate?.content?.parts?.find(part => part.functionCall);
@@ -387,19 +380,19 @@ const ChatPage = () => {
 
                     if (textPart?.text) {
                         accumulatedText += textPart.text;
-                         console.log("[DEBUG] handleSendMessage: Accumulated text:", accumulatedText);
+                         // console.log("[DEBUG] handleSendMessage: Accumulated text:", accumulatedText.substring(0, 100) + '...'); // Less verbose log
                         setMessages(prev => { latestMessagesState = prev.map(m => m.id === tempAiMsgId ? { ...m, content: accumulatedText, isPending: true } : m); return latestMessagesState; });
-                        scrollToBottom('smooth'); // Scroll as text streams
+                        scrollToBottom('smooth');
                     }
                 } // End stream processing loop
-                console.log("[DEBUG] handleSendMessage: Finished stream iteration.");
+                console.log("[DEBUG] handleSendMessage: Finished async iteration.");
 
                 // --- Decide Action ---
                 // A. FUNCTION CALL Required
                 if (detectedFunctionCall) {
-                    console.log("[DEBUG] handleSendMessage: Processing detected Function Call:", detectedFunctionCall.name);
+                    console.log("[DEBUG] handleSendMessage: Processing detected Function Call:", detectedFunctionCall.name, "Args:", detectedFunctionCall.args);
                     const tempToolCallMsgId = `temp-toolcall-${Date.now()}`;
-                    const serializedCall = JSON.stringify(detectedFunctionCall);
+                    const serializedCall = JSON.stringify(detectedFunctionCall); // Store the request
                     const toolCallMsg: DisplayMessage = { id: tempToolCallMsgId, content: serializedCall, isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(), isToolCall: true, isPending: true };
                     setMessages(prev => { latestMessagesState = [...prev, toolCallMsg]; return latestMessagesState; });
                     scrollToBottom();
@@ -407,8 +400,9 @@ const ChatPage = () => {
                     let toolResult: LinkupSearchResult | { error: string }; let toolResultMessage = "";
 
                     if (detectedFunctionCall.name === 'linkup_web_search') {
-                        const query = detectedFunctionCall.args.q as string || "missing query";
+                        const query = detectedFunctionCall.args?.q as string || "missing query"; // Safer access to args
                         toolResultMessage = `Searching the web for: "${query}"...`;
+                        console.log("[DEBUG] handleSendMessage: Updating tool message to 'Searching...'");
                         setMessages(prev => { latestMessagesState = prev.map(m => m.id === tempToolCallMsgId ? { ...m, isPending: true, content: toolResultMessage } : m); return latestMessagesState; });
                         toolResult = await callLinkupSearchAPI(query); // Await tool execution
                     } else {
@@ -416,8 +410,8 @@ const ChatPage = () => {
                     }
 
                     const functionResponsePart: FunctionResponse = { name: detectedFunctionCall.name, response: toolResult };
-                    const serializedResponse = JSON.stringify(functionResponsePart);
-                    const resultSummary = (toolResult as { error: string }).error ? `Search failed: ${(toolResult as { error: string }).error}` : `Search results received for "${(detectedFunctionCall.args.q as string || 'topic')}".`;
+                    const serializedResponse = JSON.stringify(functionResponsePart); // Serialize the response being sent back
+                    const resultSummary = (toolResult as { error: string }).error ? `Search failed: ${(toolResult as { error: string }).error}` : `Search results received for "${(detectedFunctionCall.args?.q as string || 'topic')}".`;
 
                     console.log("[DEBUG] handleSendMessage: Updating tool message state with result summary:", resultSummary);
                     setMessages(prev => { latestMessagesState = prev.map(m => m.id === tempToolCallMsgId ? { ...m, isPending: false, content: resultSummary, toolResultContent: serializedResponse } : m); return latestMessagesState; });
@@ -426,20 +420,20 @@ const ChatPage = () => {
                     // Prepare history for the NEXT Gemini call
                     currentHistory.push({ role: 'model', parts: [{ functionCall: detectedFunctionCall }] });
                     currentHistory.push({ role: 'user', parts: [{ functionResponse: functionResponsePart }] });
-                    console.log("[DEBUG] handleSendMessage: Updated history after function call for next turn:", currentHistory);
+                    console.log("[DEBUG] handleSendMessage: Updated history after function call for next turn. Length:", currentHistory.length);
 
                     // Save tool interaction message to DB
                     const toolMessagePayload: MessagePayload = { thread_id: currentThread, content: resultSummary, role: 'assistant', user_id: userId, metadata: { isToolCall: true, toolResultContent: serializedResponse } };
                     saveMessageToDb(toolMessagePayload).catch(err => console.error("[DEBUG] handleSendMessage: Error saving tool message:", err));
 
                     console.log("[DEBUG] handleSendMessage: Continuing interaction loop after function call.");
-                    continue; // Loop back to Gemini with function result
+                    continue; // Loop back
                 }
 
                 // B. TEXT Response Received
                 else if (accumulatedText) {
-                    console.log("[DEBUG] handleSendMessage: Final Text Response Received:", accumulatedText);
-                    setMessages(prev => { latestMessagesState = prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: accumulatedText, isPending: false } : msg); return latestMessagesState; });
+                     console.log("[DEBUG] handleSendMessage: Final Text Response Received. Length:", accumulatedText.length);
+                     setMessages(prev => { latestMessagesState = prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: accumulatedText, isPending: false } : msg); return latestMessagesState; });
                     scrollToBottom();
                     const aiMessagePayload: MessagePayload = { thread_id: currentThread, content: accumulatedText, role: 'assistant', user_id: userId };
                     saveMessageToDb(aiMessagePayload).catch(err => console.error("[DEBUG] handleSendMessage: Error saving final AI message:", err));
@@ -449,9 +443,11 @@ const ChatPage = () => {
 
                 // C. No Text/Function Call (Error Case)
                 else {
-                    const finalResponse = await result.response; // Check final response object
-                    console.warn("[DEBUG] handleSendMessage: Gemini responded empty after stream.", finalResponse);
-                    const errMsg = finalResponse?.promptFeedback?.blockReason?.message || "AI assistant did not provide a response.";
+                    // Use the aggregatedResponse from the end of the stream loop
+                    const finalPromptFeedback = aggregatedResponse?.promptFeedback;
+                    // const finalCandidates = aggregatedResponse?.candidates; // Could inspect candidates further if needed
+                    console.warn("[DEBUG] handleSendMessage: Stream finished with no text or function call.", aggregatedResponse);
+                    const errMsg = finalPromptFeedback?.blockReason?.message || "The AI assistant did not provide a response or function call.";
                     setApiError(errMsg);
                     setMessages(prev => {
                         const pIdx = prev.findIndex(m => m.id === tempAiMsgId);
@@ -470,16 +466,16 @@ const ChatPage = () => {
                  console.error("[DEBUG] handleSendMessage: Function calling loop reached maximum iterations.");
                  setApiError("The conversation flow became too complex. Please try rephrasing.");
                  const loopErrorMsg: DisplayMessage = { id: `loop-error-${Date.now()}`, content: "Error: Conversation complexity limit reached.", isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(), isError: true };
-                 setMessages(prev => [...prev.filter(m => !m.isPending), loopErrorMsg]);
+                 setMessages(prev => [...prev.filter(m => !m.isPending), loopErrorMsg]); // Add error, remove pending
             }
 
         } catch (aiError: any) {
-            // Catch errors from API call or processing
-             console.error("[DEBUG] handleSendMessage: Error during Gemini interaction:", aiError);
+            // Catch errors from API call promise or during processing
+             console.error("[DEBUG] handleSendMessage: Error caught during interaction loop:", aiError);
              const errorMessage = aiError.message || "Unknown API error occurred.";
              setApiError(errorMessage);
              const errorDisplayMsg: DisplayMessage = { id: `error-${Date.now()}`, content: `Error: ${errorMessage}`, isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(), isError: true };
-             // Add error message, clear any pending messages
+             // Add error message, clear any remaining pending messages
              setMessages(prev => [...prev.filter(m => !m.isPending), errorDisplayMsg]);
             scrollToBottom();
         } finally {
@@ -489,7 +485,7 @@ const ChatPage = () => {
     }, [currentThreadId, isResponding, session?.user?.id, messages, scrollToBottom, genAI]); // Dependencies
 
 
-    // --- Other Callbacks ---
+    // --- Other Callbacks (No changes needed) ---
     const closeMobileSidebar = useCallback(() => { console.log("[DEBUG] closeMobileSidebar"); setIsMobileSidebarOpen(false); }, []);
     const openMobileSidebar = useCallback(() => { console.log("[DEBUG] openMobileSidebar"); if (!activePanel) setActivePanel('discover'); setIsMobileSidebarOpen(true); }, [activePanel]);
     const collapseDesktopSidebar = useCallback(() => { console.log("[DEBUG] collapseDesktopSidebar"); setIsDesktopSidebarExpanded(false); }, []);
@@ -504,132 +500,76 @@ const ChatPage = () => {
     // --- Effects ---
     useEffect(() => {
         console.log("[DEBUG] Auth Effect: userLoading=", userLoading, "session=", !!session);
-        if (!userLoading && !session) {
-            console.log("[DEBUG] Auth Effect: Redirecting to login.");
-            navigate('/', { replace: true });
-        }
+        if (!userLoading && !session) { console.log("[DEBUG] Auth Effect: Redirecting to login."); navigate('/', { replace: true }); }
     }, [session, userLoading, navigate]);
 
     // Initial Load / Thread Change Effect
     useEffect(() => {
-        const effectId = Date.now(); // ID for tracking specific effect run
+        const effectId = Date.now();
         console.log(`[DEBUG] Load Effect (${effectId}): START. isInitialMount=`, isInitialMount.current, "chatLoading=", chatLoading);
         const currentUserId = session?.user?.id;
-        if (!currentUserId || userLoading) {
-            console.log(`[DEBUG] Load Effect (${effectId}): Exiting early (no user or user loading).`);
-            setChatLoading(false);
-            return;
-        }
+        if (!currentUserId || userLoading) { console.log(`[DEBUG] Load Effect (${effectId}): Exiting early (no user or user loading).`); setChatLoading(false); return; }
         const threadIdFromState = location.state?.threadId;
         console.log(`[DEBUG] Load Effect (${effectId}): User=${currentUserId}, UserLoading=${userLoading}, State Thread=${threadIdFromState}, Current Thread=${currentThreadId}`);
 
-        // Prevent redundant reloads
-         if (threadIdFromState === currentThreadId && !isInitialMount.current && !chatLoading) {
-             console.log(`[DEBUG] Load Effect (${effectId}): Thread ID unchanged and not initial mount/loading, skipping reload.`);
-             return;
-         }
+         if (threadIdFromState === currentThreadId && !isInitialMount.current && !chatLoading) { console.log(`[DEBUG] Load Effect (${effectId}): Thread ID unchanged, skipping reload.`); return; }
 
         const initializeChat = async () => {
             console.log(`[DEBUG] Load Effect (${effectId}): Initializing Chat... Setting chatLoading=true`);
-            setChatLoading(true); setMessages([]); setApiError(null);
-            setCreateThreadError(null); setPlaceholderType(null);
+            setChatLoading(true); setMessages([]); setApiError(null); setCreateThreadError(null); setPlaceholderType(null);
 
             if (threadIdFromState) {
                 console.log(`[DEBUG] Load Effect (${effectId}): Loading thread from state:`, threadIdFromState);
-                if (threadIdFromState !== currentThreadId) {
-                     console.log(`[DEBUG] Load Effect (${effectId}): Setting currentThreadId state.`);
-                    setCurrentThreadId(threadIdFromState);
-                }
+                if (threadIdFromState !== currentThreadId) { console.log(`[DEBUG] Load Effect (${effectId}): Setting currentThreadId state.`); setCurrentThreadId(threadIdFromState); }
                 try {
                     console.log(`[DEBUG] Load Effect (${effectId}): Fetching messages from DB for thread`, threadIdFromState);
-                    const { data: existingMessages, error: messagesError } = await supabase
-                        .from('messages')
-                        .select('*, metadata')
-                        .eq('thread_id', threadIdFromState)
-                        .order('created_at', { ascending: true });
-
-                    if (messagesError) {
-                        console.error(`[DEBUG] Load Effect (${effectId}): DB error fetching messages:`, messagesError);
-                        throw messagesError;
-                    }
+                    const { data: existingMessages, error: messagesError } = await supabase.from('messages').select('*, metadata').eq('thread_id', threadIdFromState).order('created_at', { ascending: true });
+                    if (messagesError) { console.error(`[DEBUG] Load Effect (${effectId}): DB error fetching messages:`, messagesError); throw messagesError; }
                     console.log(`[DEBUG] Load Effect (${effectId}): DB fetch success, ${existingMessages.length} messages found.`);
-
-                    const formatted = existingMessages.map((msg, idx) => {
-                        // console.log(`[DEBUG] Load Effect (${effectId}): Formatting message ${idx}:`, msg); // Can be very verbose
-                        return {
-                            id: msg.id, content: msg.content ?? '', isUser: msg.role === 'user', role: msg.role as 'user' | 'assistant',
-                            timestamp: "", created_at: msg.created_at,
-                            isToolCall: (msg.metadata as any)?.isToolCall ?? false, toolResultContent: (msg.metadata as any)?.toolResultContent ?? null,
-                            isPending: false, isError: (msg.metadata as any)?.isError ?? false,
-                        };
-                    });
-
-                    console.log(`[DEBUG] Load Effect (${effectId}): Setting messages state. Count=`, formatted.length);
-                    setMessages(formatted);
-                    const newPlaceholder = formatted.length === 0 ? 'new_thread' : null;
-                    console.log(`[DEBUG] Load Effect (${effectId}): Setting placeholder type:`, newPlaceholder);
-                    setPlaceholderType(newPlaceholder);
-                    console.log(`[DEBUG] Load Effect (${effectId}): Setting chatLoading=false.`);
-                    setChatLoading(false);
-                    requestAnimationFrame(() => {
-                        console.log(`[DEBUG] Load Effect (${effectId}): Requesting scroll after render.`);
-                        scrollToBottom('auto');
-                    });
+                    const formatted = existingMessages.map((msg) => ({ id: msg.id, content: msg.content ?? '', isUser: msg.role === 'user', role: msg.role as 'user' | 'assistant', timestamp: "", created_at: msg.created_at, isToolCall: (msg.metadata as any)?.isToolCall ?? false, toolResultContent: (msg.metadata as any)?.toolResultContent ?? null, isPending: false, isError: (msg.metadata as any)?.isError ?? false, }));
+                    console.log(`[DEBUG] Load Effect (${effectId}): Setting messages state. Count=`, formatted.length); setMessages(formatted);
+                    const newPlaceholder = formatted.length === 0 ? 'new_thread' : null; console.log(`[DEBUG] Load Effect (${effectId}): Setting placeholder type:`, newPlaceholder); setPlaceholderType(newPlaceholder);
+                    console.log(`[DEBUG] Load Effect (${effectId}): Setting chatLoading=false.`); setChatLoading(false);
+                    requestAnimationFrame(() => { console.log(`[DEBUG] Load Effect (${effectId}): Requesting scroll after render.`); scrollToBottom('auto'); });
                 } catch (error: any) {
                     console.error(`[DEBUG] Load Effect (${effectId}): Error loading thread messages:`, error);
-                    setMessages([]); setCurrentThreadId(null);
-                    navigate(location.pathname, { replace: true, state: {} }); // Clear URL state
-                    setCreateThreadError(`Failed to load chat: ${error.message}`);
-                    setChatLoading(false); setPlaceholderType(null);
+                    setMessages([]); setCurrentThreadId(null); navigate(location.pathname, { replace: true, state: {} });
+                    setCreateThreadError(`Failed to load chat: ${error.message}`); setChatLoading(false); setPlaceholderType(null);
                 }
             } else {
                 console.log(`[DEBUG] Load Effect (${effectId}): No thread in state, creating new one...`);
-                await handleCreateNewThread(false); // Let this handle state updates including chatLoading=false
+                await handleCreateNewThread(false);
                 console.log(`[DEBUG] Load Effect (${effectId}): Finished creating new thread.`);
             }
-             console.log(`[DEBUG] Load Effect (${effectId}): Setting isInitialMount=false.`);
-             isInitialMount.current = false; // Mark initial setup as done
+             console.log(`[DEBUG] Load Effect (${effectId}): Setting isInitialMount=false.`); isInitialMount.current = false;
         };
         initializeChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [session?.user?.id, userLoading, location.state?.threadId]); // Key dependencies
+    }, [session?.user?.id, userLoading, location.state?.threadId]); // Dependencies
 
-    // Scroll on new message effect (separate from load)
+    // Scroll on new message effect
     useEffect(() => {
-         console.log("[DEBUG] Scroll Effect Triggered: chatLoading=", chatLoading, "messages.length=", messages.length, "isInitialMount=", isInitialMount.current);
+         // console.log("[DEBUG] Scroll Effect Triggered: chatLoading=", chatLoading, "messages.length=", messages.length, "isInitialMount=", isInitialMount.current); // Can be verbose
          if (!chatLoading && messages.length > 0) {
-             // Use 'auto' only if the initial mount ref is still true (should be handled by load effect now, but safe check)
              const scrollBehavior = isInitialMount.current ? 'auto' : 'smooth';
-             console.log("[DEBUG] Scroll Effect: Calling scrollToBottom with behavior:", scrollBehavior);
+             // console.log("[DEBUG] Scroll Effect: Calling scrollToBottom with behavior:", scrollBehavior); // Can be verbose
              scrollToBottom(scrollBehavior);
          }
-    }, [messages, chatLoading, scrollToBottom]);
-
+    }, [messages, chatLoading, scrollToBottom]); // Dependencies
 
     // Mobile sidebar outside click handler effect
     useEffect(() => {
         const handler = (event: MouseEvent) => handleClickOutside(event);
-        if (isMobile && isMobileSidebarOpen) {
-            console.log("[DEBUG] Attaching outside click listener for mobile sidebar.");
-            document.addEventListener('mousedown', handler);
-        } else {
-            console.log("[DEBUG] Removing outside click listener for mobile sidebar.");
-            document.removeEventListener('mousedown', handler);
-        }
-        return () => {
-             console.log("[DEBUG] Cleanup: Removing outside click listener.");
-            document.removeEventListener('mousedown', handler);
-        };
+        if (isMobile && isMobileSidebarOpen) { /* console.log("[DEBUG] Attaching outside click listener."); */ document.addEventListener('mousedown', handler); } // Less verbose
+        else { document.removeEventListener('mousedown', handler); }
+        return () => { document.removeEventListener('mousedown', handler); };
     }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
 
 
     // --- Render Logic ---
-    if (userLoading && !session) {
-        console.log("[DEBUG] Render: Showing 'Loading User...'");
-        return <div className="flex items-center justify-center h-screen bg-background text-primary">Loading User...</div>;
-    }
+    if (userLoading && !session) { console.log("[DEBUG] Render: Showing 'Loading User...'"); return <div className="flex items-center justify-center h-screen bg-background text-primary">Loading User...</div>; }
 
-    const isLoading = chatLoading; // Only true during initial load/create
+    const isLoading = chatLoading;
     const showAnyPlaceholder = !isLoading && messages.length === 0 && !createThreadError && !apiError && (placeholderType !== null);
     const showAnyError = !isLoading && (!!createThreadError || !!apiError);
     const errorText = apiError || createThreadError || "";
@@ -637,7 +577,7 @@ const ChatPage = () => {
     const aiDisabled = !GEMINI_API_KEY;
     const searchDisabled = !LINKUP_API_KEY;
 
-    console.log("[DEBUG] Render: isLoading=", isLoading, "showAnyPlaceholder=", showAnyPlaceholder, "placeholderType=", placeholderType, "showAnyError=", showAnyError, "errorText=", errorText, "showMessagesList=", showMessagesList, "messages.length=", messages.length);
+    // console.log("[DEBUG] Render: isLoading=", isLoading, "showAnyPlaceholder=", showAnyPlaceholder, "placeholderType=", placeholderType, "showAnyError=", showAnyError, "errorText=", errorText, "showMessagesList=", showMessagesList, "messages.length=", messages.length); // Less verbose
 
     return (
         <div className="flex h-screen bg-background text-secondary overflow-hidden">
@@ -666,8 +606,7 @@ const ChatPage = () => {
                         {/* Render Actual Messages */}
                         {showMessagesList && (
                             <div className="w-full space-y-4 md:space-y-5">
-                                {messages.map((m, idx) => {
-                                     // console.log(`[DEBUG] Render: Rendering message ${idx}, ID: ${m.id}, Role: ${m.role}, isPending: ${m.isPending}, isError: ${m.isError}, isToolCall: ${m.isToolCall}`); // Very verbose
+                                {messages.map((m) => {
                                     // Render normal user/AI messages (finalized)
                                     if (!m.isPending && !m.isError && !m.isToolCall) {
                                         return <ChatMessage key={m.id} message={m.content} isUser={m.isUser} senderName={m.isUser ? (userName || 'You') : 'Parthavi'} />;
