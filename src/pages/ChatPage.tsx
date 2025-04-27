@@ -15,8 +15,11 @@ import { useUser } from '../context/UserContext';
 import { supabase } from '../lib/supabaseClient';
 import { Database } from '../types/supabase';
 import { generateRandomTitle } from '../utils';
-import InitialPlaceholder from '../components/chat/InitialPlaceholder';
+// --- Corrected Import Name ---
 import NewThreadPlaceholder from '../components/chat/NewThreadPlaceholder';
+// --- Removed old InitialPlaceholder import ---
+// import InitialPlaceholder from '../components/chat/InitialPlaceholder';
+
 
 // Type definitions
 export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
@@ -57,6 +60,12 @@ Maintain a delicate balance: be professional and insightful, yet simultaneously 
 
 const systemInstructionObject: SystemInstruction = { parts: [{ text: SYSTEM_INSTRUCTION_TEXT }] };
 
+let genAI: GoogleGenAI | null = null;
+if (API_KEY) {
+    try { genAI = new GoogleGenAI({ apiKey: API_KEY }); console.log("Gemini Initialized."); }
+    catch (e) { console.error("Gemini Init Failed:", e); genAI = null; }
+} else { console.warn("VITE_GEMINI_API_KEY not set."); }
+
 const saveMessageToDb = async (messageData: MessagePayload) => {
     if (!messageData.user_id) { console.error("Save Error: user_id missing."); return null; }
     console.log('Background save initiated for:', messageData.role);
@@ -68,97 +77,213 @@ const saveMessageToDb = async (messageData: MessagePayload) => {
     } catch (error) { console.error(`Background save FAILED for ${messageData.role}:`, error); return null; }
 };
 
-let genAI: GoogleGenAI | null = null;
-if (API_KEY) {
-    try { genAI = new GoogleGenAI({ apiKey: API_KEY }); console.log("Gemini Initialized."); }
-    catch (e) { console.error("Gemini Init Failed:", e); genAI = null; }
-} else { console.warn("VITE_GEMINI_API_KEY not set."); }
-
 const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
-    return messages.map((msg): Content => ({
-        role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }],
-    })).filter(content => content.parts[0].text?.trim());
+    // Filter out any temporary messages or messages with no content before sending to API
+    return messages
+        .filter(msg => msg.id && typeof msg.id === 'string' && !msg.id.startsWith('temp-') && msg.content?.trim())
+        .map((msg): Content => ({
+            role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }],
+        }));
 };
+
 
 const ChatPage = () => {
     const { session, user, userName, loading: userLoading } = useUser();
     const navigate = useNavigate();
     const location = useLocation();
+
     const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
-    const [currentThreadId, setCurrentThreadId] = useState<string | null>(location.state?.threadId || null);
+
+    // State for chat management
+    const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
     const [messages, setMessages] = useState<DisplayMessage[]>([]);
     const [inputMessage, setInputMessage] = useState('');
     const [isResponding, setIsResponding] = useState(false);
-    const [chatLoading, setChatLoading] = useState(true);
-    const [apiError, setApiError] = useState<string | null>(null);
-    const [createThreadError, setCreateThreadError] = useState<string | null>(null);
-    const [placeholderType, setPlaceholderType] = useState<PlaceholderType>(null);
+    const [chatLoading, setChatLoading] = useState(true); // Overall loading state for the chat view
+    const [apiError, setApiError] = useState<string | null>(null); // Error from AI API calls
+    const [threadError, setThreadError] = useState<string | null>(null); // Error from thread creation/loading
+    const [placeholderType, setPlaceholderType] = useState<PlaceholderType>('initial'); // 'initial', 'new_thread', null
+
+    // State for sidebar/UI management
     const [isDesktopSidebarExpanded, setIsDesktopSidebarExpanded] = useState(true);
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-    const [activePanel, setActivePanel] = useState<ActivePanelType>('discover');
+    const [activePanel, setActivePanel] = useState<ActivePanelType>('discover'); // Default to Discover panel
     const [isSharePopupOpen, setIsSharePopupOpen] = useState(false);
+
+    // Refs
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const sidebarRef = useRef<HTMLDivElement>(null);
-    const isInitialMount = useRef(true);
+     const isInitialRenderComplete = useRef(false);
+
+
+    // --- Core Functions ---
 
     const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+        // Use a small delay to allow DOM updates
         setTimeout(() => {
             if (chatContainerRef.current) {
-                chatContainerRef.current.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior });
+                chatContainerRef.current.scrollTo({
+                    top: chatContainerRef.current.scrollHeight,
+                    behavior
+                });
             }
-        }, 60);
+        }, 50); // Reduced delay slightly
     }, []);
 
-    const handleCreateNewThread = useCallback(async (shouldSetActive: boolean = true): Promise<string | null> => {
-        if (!session?.user) { setCreateThreadError("User session not found."); return null; }
-        console.log("Attempting to create new thread...");
-        setChatLoading(true); setMessages([]); setCurrentThreadId(null);
-        setPlaceholderType(null); setCreateThreadError(null); setApiError(null);
+    const loadExistingThread = useCallback(async (threadId: string, userId: string) => {
+        console.log("Loading existing thread:", threadId);
+        setChatLoading(true);
+        setMessages([]); // Clear messages before loading
+        setApiError(null);
+        setThreadError(null);
+        setPlaceholderType(null); // Assume content will load
+
         try {
-            const newTitle = generateRandomTitle();
-            const { data: newThread, error } = await supabase.from('threads').insert({ user_id: session.user.id, title: newTitle }).select('id').single();
-            if (error) throw error;
-            if (!newThread) throw new Error("New thread data missing after insert.");
-            console.log("New thread created:", newThread.id);
-            setCurrentThreadId(newThread.id);
-            setPlaceholderType('new_thread');
-            navigate(location.pathname, { replace: true, state: { threadId: newThread.id } });
-            if (shouldSetActive) { setActivePanel('discover'); }
-            setChatLoading(false);
-            return newThread.id;
+            const { data: existingMessages, error: messagesError } = await supabase
+                .from('messages')
+                .select('*')
+                .eq('thread_id', threadId)
+                .eq('user_id', userId) // Added security check
+                .order('created_at', { ascending: true });
+
+            if (messagesError) throw messagesError;
+
+            const formatted = (existingMessages || []).map(msg => ({
+                id: msg.id,
+                content: msg.content ?? '',
+                isUser: msg.role === 'user',
+                role: msg.role as 'user' | 'assistant', // Cast role
+                timestamp: new Date(msg.created_at).toISOString(), // Use ISO string for consistency
+                created_at: msg.created_at // Keep original DB timestamp
+            }));
+
+            console.log("Messages loaded for thread", threadId, ":", formatted.length);
+            setCurrentThreadId(threadId);
+            setMessages(formatted);
+
+            // If no messages in the loaded thread, show the 'new_thread' placeholder
+            if (formatted.length === 0) {
+                setPlaceholderType('new_thread');
+                console.log("Loaded thread is empty, showing new_thread placeholder.");
+            } else {
+                setPlaceholderType(null); // Hide placeholder if messages loaded
+            }
+
         } catch (error: any) {
-            console.error("Error creating new thread:", error);
-            setCreateThreadError(error.message || "Failed to create new thread.");
-            setChatLoading(false); setCurrentThreadId(null); setPlaceholderType(null);
+            console.error("Error loading messages for thread:", threadId, error);
+            setMessages([]); // Ensure messages are cleared on error
+            setThreadError(error.message || "Failed to load chat history.");
+            setCurrentThreadId(null); // Clear current thread on error
+            setPlaceholderType(null); // Hide placeholder on error
+        } finally {
+             setChatLoading(false); // Loading finished
+             // Scroll on load completion, after state updates have potential to render
+             requestAnimationFrame(() => {
+                 scrollToBottom('auto'); // Use 'auto' for initial load to jump without animation
+             });
+        }
+    }, [scrollToBottom]); // Only depends on scrollToBottom
+
+    const handleCreateNewThread = useCallback(async (): Promise<string | null> => {
+        if (!session?.user) {
+            console.warn("Cannot create thread, user session missing.");
+            setThreadError("User session not found. Please sign in again.");
             return null;
         }
-    }, [session, navigate, location.pathname]);
+        console.log("Attempting to create new thread...");
+        setChatLoading(true); // Show loading while creating
+        setMessages([]); // Clear messages
+        setCurrentThreadId(null); // Clear current thread
+        setApiError(null);
+        setThreadError(null);
+        setPlaceholderType(null); // Hide initial placeholder during creation
 
-    const handleSendMessage = useCallback(async (text: string) => {
-        if (!genAI) { setApiError("AI Client not configured."); return; }
-        const currentThread = currentThreadId;
-        if (!currentThread || isResponding || !session?.user) return;
-        const trimmedText = text.trim(); if (!trimmedText) return;
+        try {
+            const newTitle = generateRandomTitle(); // Or use a default title
+            const { data: newThread, error } = await supabase
+                .from('threads')
+                .insert({ user_id: session.user.id, title: newTitle })
+                .select('id')
+                .single();
 
-        setPlaceholderType(null);
-        setCreateThreadError(null); setApiError(null);
+            if (error) throw error;
+            if (!newThread) throw new Error("New thread data missing after insert.");
+
+            console.log("New thread created:", newThread.id);
+
+            // Update state with the new thread ID and show the new_thread placeholder
+            setCurrentThreadId(newThread.id);
+            setMessages([]); // Ensure messages are empty for a new thread
+            setPlaceholderType('new_thread'); // Show the placeholder for a fresh chat
+
+            // Navigate replaces the current history entry, adding the new threadId to state
+            // This allows refreshing the page and keeping the thread context
+            navigate(location.pathname, { replace: true, state: { threadId: newThread.id } });
+
+            return newThread.id; // Return the new ID
+        } catch (error: any) {
+            console.error("Error creating new thread:", error);
+            setThreadError(error.message || "Failed to create new conversation.");
+            setCurrentThreadId(null); // Ensure no thread is active on error
+            setMessages([]);
+            setPlaceholderType(null); // Hide placeholder on error
+            return null;
+        } finally {
+            setChatLoading(false); // Creation process finished
+        }
+    }, [session, navigate, location.pathname]); // Depends on session, navigate, location.pathname
+
+     const handleSendMessage = useCallback(async (text: string, targetThreadId?: string) => {
+        if (!genAI) { setApiError("AI Client not configured (Missing API Key)."); return; }
+
+        // Use the threadId passed as argument or the currentThreadId
+        const threadIdToSend = targetThreadId || currentThreadId;
+
+        if (!threadIdToSend || isResponding || !session?.user) {
+             if (!threadIdToSend) console.error("Cannot send message, no thread ID available.");
+             if (isResponding) console.warn("Cannot send message, AI is currently responding.");
+             if (!session?.user) console.warn("Cannot send message, user session missing.");
+            return;
+        }
+
+        const trimmedText = text.trim();
+        if (!trimmedText) return;
+
+        setPlaceholderType(null); // Hide any placeholder once typing/sending starts
+        setApiError(null); // Clear previous API errors
+        // Don't clear threadError here, as it might be related to thread creation/loading
+
         const userId = session.user.id;
-        setIsResponding(true); setInputMessage('');
+        setIsResponding(true);
+        setInputMessage(''); // Clear input immediately
 
+        // --- Add optimistic user message ---
         const tempUserMsgId = `temp-user-${Date.now()}`;
-        const optimisticUserMsg: DisplayMessage = { id: tempUserMsgId, content: trimmedText, isUser: true, role: 'user', timestamp: "", created_at: new Date().toISOString() };
-        const historyForApi = formatChatHistoryForGemini([...messages, optimisticUserMsg]);
+        const optimisticUserMsg: DisplayMessage = { id: tempUserMsgId, content: trimmedText, isUser: true, role: 'user', timestamp: new Date().toISOString(), created_at: new Date().toISOString() };
         setMessages(prev => [...prev, optimisticUserMsg]);
         scrollToBottom('smooth');
 
-        const userMessagePayload: MessagePayload = { thread_id: currentThread, content: trimmedText, role: 'user', user_id: userId };
-        saveMessageToDb(userMessagePayload).catch(err => console.error("Error saving user message:", err));
+        // --- Save user message to DB (background) ---
+        const userMessagePayload: MessagePayload = { thread_id: threadIdToSend, content: trimmedText, role: 'user', user_id: userId };
+        // Save user message and update its ID when done
+         const savedUserMsgId = await saveMessageToDb(userMessagePayload);
+         if(savedUserMsgId) {
+             setMessages(prev => prev.map(msg =>
+                 msg.id === tempUserMsgId ? { ...msg, id: savedUserMsgId as string } : msg
+             ));
+         } else {
+             console.warn("Failed to save user message, leaving temporary ID.");
+         }
 
         // --- Add placeholder AI message (initially empty content) ---
-        const tempAiMsgId = `temp-ai-${Date.now()}`;
-        const optimisticAiMsg: DisplayMessage = { id: tempAiMsgId, content: '', isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString() };
+        const tempAiMsgId = `temp-ai-${Date.now() + 1}`; // Ensure different temp ID
+        const optimisticAiMsg: DisplayMessage = { id: tempAiMsgId, content: '', isUser: false, role: 'assistant', timestamp: new Date().toISOString(), created_at: new Date().toISOString() };
         setMessages(prev => [...prev, optimisticAiMsg]);
-        // Don't scroll yet, wait for content
+        // Scroll to show the new message placeholder
+        scrollToBottom('smooth');
+
+        // --- Prepare history for API, excluding temporary messages ---
+        const historyForApi = formatChatHistoryForGemini([...messages, { ...optimisticUserMsg, id: savedUserMsgId || tempUserMsgId }]); // Use saved ID if available
 
         try {
             const requestPayload = {
@@ -170,199 +295,477 @@ const ChatPage = () => {
                 },
             };
 
-            if (!genAI) throw new Error("Gemini AI Client lost.");
+            if (!genAI) throw new Error("Gemini AI Client not initialized.");
             const result = await genAI.models.generateContentStream(requestPayload);
 
-            let accumulatedResponse = ""; // Accumulate text here
-            let streamSource: AsyncIterable<GenerateContentResponse> | null = null;
+            let accumulatedResponse = "";
+            const streamSource = result?.stream; // Access the stream property
 
-            if (result && typeof result[Symbol.asyncIterator] === 'function') streamSource = result;
-            else if (result && result.stream && typeof result.stream[Symbol.asyncIterator] === 'function') streamSource = result.stream;
-            else throw new Error(`Unexpected API response structure: ${JSON.stringify(result).substring(0,100)}...`);
+            if (!streamSource || typeof streamSource[Symbol.asyncIterator] !== 'function') {
+                 throw new Error(`Unexpected API response structure or stream not found: ${JSON.stringify(result).substring(0,100)}...`);
+            }
 
-            if (streamSource) {
-                // --- Collect full response *without* updating state ---
-                for await (const chunk of streamSource) {
-                    const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (chunkText) {
-                        accumulatedResponse += chunkText;
-                        // *** REMOVED setMessages call from inside the loop ***
-                    }
+            // --- Accumulate full response before updating state ---
+            for await (const chunk of streamSource) {
+                const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (chunkText) {
+                    accumulatedResponse += chunkText;
                 }
             }
 
-            // --- Update state ONCE after stream finishes ---
-            if (accumulatedResponse) {
-                setMessages(prev => prev.map(msg =>
-                    msg.id === tempAiMsgId
-                        ? { ...msg, content: accumulatedResponse } // Set the full content
-                        : msg
-                ));
-                // Save the complete message to DB
-                const aiMessagePayload: MessagePayload = { thread_id: currentThread, content: accumulatedResponse, role: 'assistant', user_id: userId };
-                saveMessageToDb(aiMessagePayload).catch(err => console.error("Error saving AI message:", err));
-            } else {
-                console.warn("AI generated empty response.");
-                // Update the placeholder message to indicate no response
-                setMessages(prev => prev.map(msg =>
-                    msg.id === tempAiMsgId ? { ...msg, content: "[No text content received]" } : msg
-                ));
-            }
+            // --- Update AI message state ONCE after stream finishes ---
+            const finalContent = accumulatedResponse || "[No text content received]";
+            setMessages(prev => prev.map(msg =>
+                msg.id === tempAiMsgId
+                    ? { ...msg, content: finalContent } // Set the full content
+                    : msg
+            ));
+            // Save the complete AI message to DB
+            const aiMessagePayload: MessagePayload = { thread_id: threadIdToSend, content: finalContent, role: 'assistant', user_id: userId };
+            await saveMessageToDb(aiMessagePayload).catch(err => console.error("Error saving AI message:", err));
+
             // Scroll after the final content is set
             scrollToBottom('smooth');
+
 
         } catch (aiError: any) {
             console.error("Gemini API call error:", aiError);
             const errorMessage = aiError.message || "An unknown API error occurred.";
-            setApiError(errorMessage);
+            setApiError(errorMessage); // Set API error state
             // Update the placeholder message with error
             setMessages(prev => prev.map(msg =>
                 msg.id === tempAiMsgId ? { ...msg, content: `Error: ${errorMessage}` } : msg
             ));
-            scrollToBottom('smooth');
+            scrollToBottom('smooth'); // Scroll to reveal the error message
         } finally {
-            setIsResponding(false); // Stop responding indicator regardless of success/error
+            setIsResponding(false); // Stop responding indicator
         }
-    }, [currentThreadId, isResponding, session, messages, scrollToBottom]); // Dependencies
+    }, [currentThreadId, isResponding, session, messages, scrollToBottom]);
 
-    // Other callbacks (closeMobileSidebar, etc.) remain the same...
-    const closeMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
-    const openMobileSidebar = useCallback(() => { if (!activePanel) setActivePanel('discover'); setIsMobileSidebarOpen(true); }, [activePanel]);
-    const collapseDesktopSidebar = useCallback(() => setIsDesktopSidebarExpanded(false), []);
-    const expandDesktopSidebar = useCallback((panel: ActivePanelType) => { setActivePanel(panel || 'discover'); setIsDesktopSidebarExpanded(true); }, []);
-    const handlePanelChange = useCallback((panel: ActivePanelType) => {
-        if (isMobile) {
-            if (isMobileSidebarOpen && activePanel === panel) closeMobileSidebar();
-            else { setActivePanel(panel); setIsMobileSidebarOpen(true); }
-        } else {
-            if (isDesktopSidebarExpanded && activePanel === panel) collapseDesktopSidebar();
-            else expandDesktopSidebar(panel);
+
+    // --- Effects ---
+
+    // Effect 1: Handle user authentication state changes
+    useEffect(() => {
+        if (!userLoading && !session) {
+            console.log("Auth effect: No session found, navigating to /");
+            navigate('/', { replace: true });
+        } else if (!userLoading && session?.user) {
+            console.log("Auth effect: User session found for", session.user.id);
+            // User is signed in, proceed to check/load thread in the next effect
+            // Do NOT set chatLoading here, let the load thread effect handle it.
         }
-    }, [isMobile, activePanel, isMobileSidebarOpen, isDesktopSidebarExpanded, closeMobileSidebar, collapseDesktopSidebar, expandDesktopSidebar]);
-    const handleClickOutside = useCallback((event: MouseEvent) => {
-        if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
-            if (isMobile && isMobileSidebarOpen) closeMobileSidebar();
+    }, [session, userLoading, navigate]); // Depends on session, userLoading, navigate
+
+    // Effect 2: Handle initial thread loading or creation based on URL state
+    useEffect(() => {
+        const currentUserId = session?.user?.id;
+        const threadIdFromState = location.state?.threadId;
+
+        // Only proceed if user context is not loading and we have a user
+        if (userLoading || !currentUserId) {
+            console.log("Load/Create Effect: User loading or no user, waiting...");
+            // Keep chatLoading true or let Auth effect handle navigation out
+            if (!currentUserId && !userLoading) {
+                 // User is explicitly null after loading, reset chat state
+                 setCurrentThreadId(null);
+                 setMessages([]);
+                 setChatLoading(false); // Stop loading as no user means no chat to load
+                 setApiError(null);
+                 setThreadError(null);
+                 setPlaceholderType(null); // No placeholder if no user
+            }
+            return;
         }
-    }, [isMobile, isMobileSidebarOpen, closeMobileSidebar]);
-     const handleSelectThread = useCallback((threadId: string) => {
-        if (threadId !== currentThreadId) {
-            console.log("Selecting thread:", threadId);
-            navigate(location.pathname, { replace: true, state: { threadId: threadId } });
-             if (isMobile) closeMobileSidebar();
-        } else {
-             if (isMobile) closeMobileSidebar();
+
+        // Prevent re-running load/create logic if dependencies change but the core chat state is already initialized for the current thread
+        // This also prevents unnecessary re-creation of threads if state changes unrelated to threadId/user
+        if (currentThreadId === threadIdFromState && messages.length > 0) {
+            console.log("Load/Create Effect: Current thread state matches, skipping initialization.");
+            setChatLoading(false); // Ensure loading is off if state matches
+            return;
         }
-    }, [currentThreadId, isMobile, closeMobileSidebar, navigate, location.pathname]);
-     const handlePromptClick = useCallback((prompt: string) => {
-        if (!currentThreadId) {
-            handleCreateNewThread(false).then((newId) => {
-                if (newId) {
-                    handleSendMessage(prompt);
+
+        console.log("Load/Create Effect: User found, initializing chat logic.", { currentUserId, threadIdFromState });
+
+        const initializeChat = async () => {
+            // Reset state for new load/creation attempt
+            setChatLoading(true);
+            setMessages([]);
+            setApiError(null);
+            setThreadError(null);
+            setPlaceholderType(null); // Will be set correctly below
+
+            if (threadIdFromState) {
+                console.log("Load/Create Effect: Attempting to load thread from state:", threadIdFromState);
+                await loadExistingThread(threadIdFromState, currentUserId);
+            } else {
+                console.log("Load/Create Effect: No thread in state, creating new one.");
+                await handleCreateNewThread(); // Call the updated function
+                // handleCreateNewThread now handles setting state and navigation
+            }
+             // Note: setChatLoading(false) is now handled within loadExistingThread and handleCreateNewThread
+        };
+
+        initializeChat();
+
+         // Flag that the initial render/load is complete after the first run
+        isInitialRenderComplete.current = true;
+
+
+    }, [session?.user?.id, userLoading, location.state?.threadId, loadExistingThread, handleCreateNewThread]); // Dependencies for loading/creation effect
+
+    // Effect 3: Scroll to bottom when messages update
+    useEffect(() => {
+         // Only scroll if the initial load is complete AND messages have changed
+        if (isInitialRenderComplete.current && messages.length > 0) {
+             console.log("Messages updated, scrolling to bottom...");
+             scrollToBottom('smooth');
+        } else if (isInitialRenderComplete.current && messages.length === 0 && placeholderType !== null) {
+             // If messages become empty *after* initial render, ensure we still scroll to the placeholder area
+             console.log("Messages empty, placeholder shown, scrolling to bottom...");
+             scrollToBottom('auto');
+        }
+    }, [messages, scrollToBottom, placeholderType]);
+
+
+    // Effect 4: Handle clicks outside mobile sidebar
+    useEffect(() => {
+        const handleGlobalClick = (event: MouseEvent) => {
+             // Check if sidebar ref exists and the click is outside of it
+            if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
+                if (isMobile && isMobileSidebarOpen) {
+                    closeMobileSidebar();
                 }
-            });
+            }
+        };
+
+        if (isMobile && isMobileSidebarOpen) {
+            // Add mousedown listener for better responsiveness
+            document.addEventListener('mousedown', handleGlobalClick);
         } else {
-            handleSendMessage(prompt);
+            document.removeEventListener('mousedown', handleGlobalClick);
         }
-    }, [currentThreadId, handleCreateNewThread, handleSendMessage]);
+
+        // Cleanup
+        return () => {
+            document.removeEventListener('mousedown', handleGlobalClick);
+        };
+    }, [isMobile, isMobileSidebarOpen, closeMobileSidebar]);
+
+
+    // --- Handlers for UI Interactions ---
+
+    const closeMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
+    const openMobileSidebar = useCallback(() => {
+        // Only open if user is loaded (sidebar content depends on user)
+        if (!userLoading && session?.user) {
+             if (!activePanel) setActivePanel('discover'); // Default panel if none active
+             setIsMobileSidebarOpen(true);
+        } else {
+            console.warn("Attempted to open mobile sidebar while user is loading or not signed in.");
+        }
+    }, [activePanel, userLoading, session]); // Depend on user/session loading
+
+    const collapseDesktopSidebar = useCallback(() => setIsDesktopSidebarExpanded(false), []);
+    const expandDesktopSidebar = useCallback((panel: ActivePanelType) => {
+         // Only expand if user is loaded
+        if (!userLoading && session?.user) {
+            setActivePanel(panel || 'discover'); // Default to Discover
+            setIsDesktopSidebarExpanded(true);
+        } else {
+            console.warn("Attempted to expand desktop sidebar while user is loading or not signed in.");
+        }
+    }, [userLoading, session]);
+
+
+    const handlePanelChange = useCallback((panel: ActivePanelType) => {
+         // Only allow panel change if user is loaded
+        if (userLoading || !session?.user) {
+             console.warn("Attempted panel change while user is loading or not signed in.");
+             return; // Do nothing if user isn't ready
+        }
+
+        if (isMobile) {
+            // On mobile, clicking an active panel closes, clicking inactive opens/switches
+            if (isMobileSidebarOpen && activePanel === panel) {
+                closeMobileSidebar();
+            } else {
+                setActivePanel(panel);
+                setIsMobileSidebarOpen(true); // Ensure sidebar opens when changing panel
+            }
+        } else {
+            // On desktop, clicking an active panel collapses the panel view
+            if (isDesktopSidebarExpanded && activePanel === panel) {
+                collapseDesktopSidebar();
+            } else {
+                setActivePanel(panel); // Set panel first
+                expandDesktopSidebar(panel); // Then expand
+            }
+        }
+    }, [isMobile, activePanel, isMobileSidebarOpen, isDesktopSidebarExpanded, closeMobileSidebar, collapseDesktopSidebar, expandDesktopSidebar, userLoading, session]);
+
+
+     const handleSelectThread = useCallback((threadId: string) => {
+        // Only select thread if not already selected and user is loaded
+        if (threadId !== currentThreadId && !userLoading && session?.user) {
+            console.log("Selecting thread:", threadId);
+            // Update URL state, which will trigger the load/create effect
+            navigate(location.pathname, { replace: true, state: { threadId: threadId } });
+             if (isMobile) closeMobileSidebar(); // Close sidebar on mobile
+        } else if (isMobile) {
+             // If mobile and already on the thread or user loading, just close sidebar
+             closeMobileSidebar();
+        } else {
+             // Desktop, no change, maybe do nothing or visually indicate already selected
+             console.log("Attempted to select already active thread or user loading.");
+        }
+    }, [currentThreadId, isMobile, closeMobileSidebar, navigate, location.pathname, userLoading, session]); // Added userLoading, session
+
+
+     const handlePromptClick = useCallback((prompt: string) => {
+         // This handler is primarily for the NewThreadPlaceholder
+         // It should always initiate a new thread creation if one doesn't exist,
+         // or send the message in the *current* (likely new and empty) thread.
+         console.log(`Prompt clicked: "${prompt}". Current thread ID: ${currentThreadId}`);
+
+         if (!session?.user || userLoading) {
+              console.warn("Attempted prompt click while user is loading or not signed in.");
+             // Maybe show a message to the user? Or the button should be disabled.
+              return;
+         }
+
+         // If there's no current thread ID, create one first, then send the message
+        if (!currentThreadId) {
+             console.log("No current thread ID, creating new thread before sending prompt.");
+             // Call handleCreateNewThread and chain the send message call
+             handleCreateNewThread()
+                 .then(newThreadId => {
+                     if (newThreadId) {
+                         console.log("New thread created after prompt click, sending message...");
+                         // Pass the new thread ID explicitly to handleSendMessage
+                         handleSendMessage(prompt, newThreadId);
+                     } else {
+                         console.error("Failed to create new thread after prompt click.");
+                         // handleCreateNewThread should set threadError state
+                     }
+                 })
+                 .catch(err => {
+                     console.error("Error during handleCreateNewThread or handleSendMessage chain:", err);
+                      setThreadError("Failed to start chat with prompt."); // Generic error
+                 });
+        } else {
+             // If a thread ID already exists (even if it's a new empty one), just send the message in it
+             console.log("Current thread ID exists, sending message directly.");
+             handleSendMessage(prompt);
+        }
+
+         if (isMobile) closeMobileSidebar(); // Close sidebar on mobile after clicking a prompt
+
+
+    }, [currentThreadId, handleCreateNewThread, handleSendMessage, isMobile, closeMobileSidebar, session, userLoading]); // Added session, userLoading
+
+
     const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
     const openSharePopup = () => setIsSharePopupOpen(true);
 
 
-    // --- Effects ---
-    useEffect(() => { if (!userLoading && !session) navigate('/', { replace: true }); }, [session, userLoading, navigate]);
-
-    useEffect(() => {
-        const currentUserId = session?.user?.id;
-        if (!currentUserId || userLoading) { setChatLoading(false); return; }
-        const threadIdFromState = location.state?.threadId;
-        console.log("Load Effect: User=", currentUserId, "Loading=", userLoading, "State Thread=", threadIdFromState);
-
-        const initializeChat = async () => {
-             setChatLoading(true); setMessages([]); setApiError(null);
-             setCreateThreadError(null); setPlaceholderType(null);
-             isInitialMount.current = true;
-
-            if (threadIdFromState) {
-                console.log("Load Effect: Loading thread from state:", threadIdFromState);
-                setCurrentThreadId(threadIdFromState);
-                 try {
-                    const { data: existingMessages, error: messagesError } = await supabase.from('messages').select('*').eq('thread_id', threadIdFromState).order('created_at', { ascending: true });
-                    if (messagesError) throw messagesError;
-                    const formatted = existingMessages.map(msg => ({ id: msg.id, content: msg.content ?? '', isUser: msg.role === 'user', role: msg.role as 'user' | 'assistant', timestamp: "", created_at: msg.created_at }));
-                    setMessages(formatted);
-                    setPlaceholderType(formatted.length === 0 ? 'new_thread' : null);
-                    console.log("Load Effect: Messages loaded, count=", formatted.length, "Placeholder=", formatted.length === 0 ? 'new_thread' : null);
-                    setChatLoading(false);
-                    requestAnimationFrame(() => {
-                         scrollToBottom('auto');
-                         isInitialMount.current = false;
-                    });
-                } catch (error: any) {
-                    console.error("Load Effect: Error loading messages:", error);
-                    setMessages([]); setCreateThreadError(`Failed to load chat: ${error.message}`); setChatLoading(false);
-                    setPlaceholderType(null);
-                    isInitialMount.current = false;
-                }
-            } else {
-                console.log("Load Effect: No thread in state, creating new one.");
-                await handleCreateNewThread(false);
-                isInitialMount.current = false;
-            }
-        };
-        initializeChat();
-    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]);
-
-    useEffect(() => {
-        // This effect will run AFTER the state update with the full message,
-        // ensuring scroll happens after content is potentially rendered.
-        if (!isInitialMount.current && messages.length > 0) {
-             scrollToBottom('smooth');
-        }
-    }, [messages, scrollToBottom]); // Depend only on messages and scroll function
-
-    useEffect(() => {
-        if (isMobile && isMobileSidebarOpen) document.addEventListener('mousedown', handleClickOutside);
-        else document.removeEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
-
-
     // --- Render Logic ---
-    if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background">Loading User...</div>;
 
-    const isLoading = chatLoading;
-    const showAnyPlaceholder = !isLoading && messages.length === 0 && !createThreadError && !apiError && (placeholderType !== null);
-    const showAnyError = !isLoading && (!!createThreadError || !!apiError);
-    const errorText = apiError || createThreadError || "";
-    const showMessagesList = !isLoading && !showAnyPlaceholder && !showAnyError;
+    // Show a global loading screen if user context is still loading
+    if (userLoading) {
+        console.log("Rendering: User Loading");
+        return (
+            <div className="flex items-center justify-center h-screen bg-background text-secondary">
+                <Loader2 className="w-6 h-6 animate-spin mr-3" />
+                Loading User...
+            </div>
+        );
+    }
 
-    console.log("Render Check: isLoading", isLoading, "showAnyPlaceholder", showAnyPlaceholder, "showAnyError", showAnyError, "showMessagesList", showMessagesList, "messages.length", messages.length, "placeholderType", placeholderType);
+     // User context finished loading, but no session found - UserContext should handle redirect
+     if (!session || !user) {
+         console.log("Rendering: User Loading Complete, No Session. UserContext should redirect.");
+         // We render null or a minimal state here as UserContext is responsible for navigation
+         return null; // Or a simple spinner/message that disappears when redirect happens
+     }
+
+
+    // Determine content to show in the main chat area
+    const showChatContent = !chatLoading && messages.length > 0;
+    const showPlaceholderContent = !chatLoading && messages.length === 0 && !threadError && !apiError && placeholderType !== null;
+    const showAnyError = !chatLoading && (!!threadError || !!apiError);
+    const errorText = threadError || apiError || "An unexpected error occurred."; // Prioritize thread errors
+
+     console.log("Rendering: Chat View State Check", {
+        userLoaded: !userLoading,
+        hasSession: !!session,
+        chatLoading: chatLoading,
+        messagesCount: messages.length,
+        threadError: !!threadError,
+        apiError: !!apiError,
+        placeholderType: placeholderType,
+        showChatContent,
+        showPlaceholderContent,
+        showAnyError
+    });
+
 
     return (
         <div className="flex h-screen bg-background text-secondary overflow-hidden">
-             <AnimatePresence>{isMobile && isMobileSidebarOpen && ( <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={closeMobileSidebar} aria-hidden="true"/> )}</AnimatePresence>
-             <motion.div ref={sidebarRef} className={clsx( "absolute md:relative h-full flex-shrink-0 z-40 bg-background border-r border-gray-200/80", "transition-transform duration-300 ease-in-out", isMobile ? (isMobileSidebarOpen ? SIDEBAR_WIDTH_MOBILE_OPEN : 'w-16') : (isDesktopSidebarExpanded ? SIDEBAR_WIDTH_DESKTOP : SIDEBAR_ICON_WIDTH_DESKTOP), isMobile && (isMobileSidebarOpen ? 'translate-x-0 shadow-lg' : '-translate-x-full') )}>
-                  <Sidebar isExpanded={!isMobile && isDesktopSidebarExpanded} isMobileOpen={isMobile && isMobileSidebarOpen} activePanel={activePanel} onPanelChange={handlePanelChange} openSharePopup={openSharePopup} onCloseMobileSidebar={closeMobileSidebar} onSelectThread={handleSelectThread} onNewThread={handleCreateNewThread} currentThreadId={currentThreadId} />
+             {/* Mobile Sidebar Overlay */}
+             <AnimatePresence>
+                 {isMobile && isMobileSidebarOpen && (
+                     <motion.div
+                         initial={{ opacity: 0 }}
+                         animate={{ opacity: 1 }}
+                         exit={{ opacity: 0 }}
+                         transition={{ duration: 0.2 }}
+                         className="fixed inset-0 bg-black/30 z-30 md:hidden"
+                         onClick={closeMobileSidebar}
+                         aria-hidden="true"
+                     />
+                 )}
+            </AnimatePresence>
+
+            {/* Sidebar */}
+             <motion.div
+                 ref={sidebarRef}
+                 className={clsx(
+                     "absolute md:relative h-full flex-shrink-0 z-40 bg-background border-r border-gray-200/80",
+                     "transition-transform duration-300 ease-in-out",
+                     isMobile
+                         ? (isMobileSidebarOpen ? SIDEBAR_WIDTH_MOBILE_OPEN : 'w-16')
+                         : (isDesktopSidebarExpanded ? SIDEBAR_WIDTH_DESKTOP : SIDEBAR_ICON_WIDTH_DESKTOP),
+                     isMobile && (isMobileSidebarOpen ? 'translate-x-0 shadow-lg' : '-translate-x-full')
+                 )}
+             >
+                  <Sidebar
+                    isExpanded={!isMobile && isDesktopSidebarExpanded}
+                    isMobileOpen={isMobile && isMobileSidebarOpen}
+                    activePanel={activePanel}
+                    onPanelChange={handlePanelChange}
+                    openSharePopup={openSharePopup}
+                    onCloseMobileSidebar={closeMobileSidebar}
+                    onSelectThread={handleSelectThread}
+                    onNewThread={handleCreateNewThread} // Pass the create function
+                    currentThreadId={currentThreadId}
+                 />
              </motion.div>
 
+            {/* Main Chat Area */}
             <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-                {isMobile && ( <div className="flex items-center px-4 py-2 border-b border-gray-200/60 flex-shrink-0 h-14"> <button onClick={isMobileSidebarOpen ? closeMobileSidebar : openMobileSidebar} className="p-2 text-gray-600 hover:text-primary" aria-label={isMobileSidebarOpen ? "Close menu" : "Open menu"}> {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />} </button> <h1 className="flex-grow text-center text-base font-semibold text-secondary truncate px-2">Parthavi</h1> <div className="w-8 h-8"></div> </div> )}
-                 <div ref={chatContainerRef} className={clsx('flex-1 overflow-y-auto scroll-smooth min-h-0', 'px-4 md:px-10 lg:px-16 xl:px-20 pt-4 pb-4')} >
-                    <div className={clsx("max-w-4xl mx-auto w-full flex flex-col min-h-full", showMessagesList ? 'justify-end' : 'justify-center items-center')} >
-                        {isLoading && <div className="flex justify-center items-center p-10 text-gray-500 flex-1"> <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading... </div>}
-                        {showAnyPlaceholder && placeholderType === 'initial' && <div className="flex-1 flex items-center justify-center w-full"><InitialPlaceholder onPromptClick={handlePromptClick} /></div>}
-                        {showAnyPlaceholder && placeholderType === 'new_thread' && <div className="flex-1 flex items-center justify-center w-full"><NewThreadPlaceholder onPromptClick={handlePromptClick} /></div>}
-                        {showAnyError && <div className="flex-1 flex items-center justify-center w-full"><div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'><AlertCircle className="w-8 h-8 mb-3 text-red-400" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div></div>}
-                        {showMessagesList && <div className="w-full space-y-4 md:space-y-5">{messages.map((m) => <ChatMessage key={m.id} message={m.content} isUser={m.isUser} senderName={m.isUser ? (userName || 'You') : 'Parthavi'} />)}</div>}
+                {/* Mobile Header */}
+                {isMobile && (
+                     <div className="flex items-center px-4 py-2 border-b border-gray-200/60 flex-shrink-0 h-14 bg-background z-10"> {/* Added bg and z-index */}
+                         <button
+                            onClick={isMobileSidebarOpen ? closeMobileSidebar : openMobileSidebar}
+                            className="p-2 text-gray-600 hover:text-primary"
+                            aria-label={isMobileSidebarOpen ? "Close menu" : "Open menu"}
+                         >
+                            {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />}
+                         </button>
+                         {/* Display Thread Title or App Name */}
+                         <h1 className="flex-grow text-center text-base font-semibold text-secondary truncate px-2">
+                            {/* You might want to display the current thread's title here */}
+                            Parthavi
+                         </h1>
+                         {/* Placeholder for alignment */}
+                         <div className="w-8 h-8"></div>
+                     </div>
+                )}
+
+                 {/* Chat Messages / Placeholder / Error Area */}
+                 <div
+                    ref={chatContainerRef}
+                    className={clsx(
+                       'flex-1 overflow-y-auto scroll-smooth min-h-0 w-full',
+                       'px-4 md:px-10 lg:px-16 xl:px-20 pt-4 pb-4',
+                       // Center content if showing placeholder or error
+                       (showPlaceholderContent || showAnyError) ? 'flex justify-center items-center' : 'flex flex-col items-center'
+                    )}
+                 >
+                    <div className={clsx(
+                         "max-w-4xl mx-auto w-full flex flex-col",
+                         // Keep messages aligned to bottom if content overflows, center otherwise
+                         showChatContent ? 'min-h-0 justify-end' : 'min-h-full justify-center items-center text-center'
+                         )}
+                    >
+                        {/* Loading State */}
+                        {chatLoading && (
+                             <div className="flex justify-center items-center p-10 text-gray-500 flex-grow"> {/* Use flex-grow to center in available space */}
+                                <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading chat...
+                            </div>
+                        )}
+
+                        {/* Placeholder State (Initial or New Thread) */}
+                        {showPlaceholderContent && (
+                            <div className="flex-grow flex items-center justify-center w-full"> {/* Use flex-grow */}
+                                {placeholderType === 'initial' && <NewThreadPlaceholder onPromptClick={handlePromptClick} />}
+                                {placeholderType === 'new_thread' && <NewThreadPlaceholder onPromptClick={handlePromptClick} />}
+                                {/* Note: Both initial and new_thread states currently use the same placeholder component */}
+                            </div>
+                        )}
+
+                        {/* Error State */}
+                        {showAnyError && (
+                             <div className="flex-grow flex items-center justify-center w-full"> {/* Use flex-grow */}
+                                <div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'>
+                                    <AlertCircle className="w-8 h-8 mb-3 text-red-400" />
+                                    <p className="font-medium mb-1">Oops! Something went wrong.</p>
+                                    <p className="text-sm">{errorText}</p>
+                                    <p className="text-xs mt-2 text-gray-600">Please try again. If the problem persists, contact support.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Messages List */}
+                        {showChatContent && (
+                           <div className="w-full space-y-4 md:space-y-5">
+                                {messages.map((m) => (
+                                    <ChatMessage
+                                        key={m.id} // Key is crucial
+                                        message={m.content}
+                                        isUser={m.isUser}
+                                        senderName={m.isUser ? (userName || 'You') : 'Parthavi'}
+                                    />
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
-                <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
+
+                {/* Input Area */}
+                <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0 z-10"> {/* Added z-index */}
                     <div className="max-w-4xl mx-auto">
-                        <ChatInput value={inputMessage} onChange={handleInputChange} onSendMessage={handleSendMessage} isResponding={isResponding || chatLoading || (!genAI && !API_KEY)} />
-                         {!genAI && !API_KEY && ( <p className="text-xs text-red-500 mt-2 text-center px-4"> AI functionality is disabled. Missing API Key. </p> )}
+                        {/* Only show input if chat is not loading AND there's no error AND user is loaded */}
+                        {!chatLoading && !showAnyError && !userLoading && session?.user && (
+                            <ChatInput
+                                value={inputMessage}
+                                onChange={handleInputChange}
+                                onSendMessage={handleSendMessage}
+                                isResponding={isResponding}
+                            />
+                        )}
+                         {(!genAI && !API_KEY && !chatLoading && !showAnyError) && (
+                             <p className="text-xs text-red-500 mt-2 text-center px-4"> AI functionality is disabled. Missing API Key. </p>
+                         )}
+                         {(showAnyError && !chatLoading) && (
+                              <p className="text-xs text-gray-500 mt-2 text-center px-4">
+                                  Please resolve the error above to continue chatting.
+                              </p>
+                         )}
+                         {(chatLoading) && (
+                             <div className="text-xs text-gray-500 mt-2 text-center px-4"> Loading chat... </div>
+                         )}
+                         {(!userLoading && !session?.user) && (
+                             <div className="text-xs text-gray-500 mt-2 text-center px-4"> Please sign in to chat. </div>
+                         )}
                     </div>
                 </div>
             </main>
+
+            {/* Share Popup */}
             <SharePopup isOpen={isSharePopupOpen} onClose={() => setIsSharePopupOpen(false)} />
         </div>
     );
