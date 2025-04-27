@@ -1,6 +1,7 @@
 // src/App.tsx
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+// Remove BrowserRouter import: import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom'; // Keep other imports
 import { AnimatePresence } from 'framer-motion';
 
 import SignInPage from './pages/SignInPage';
@@ -18,28 +19,30 @@ import TermsOfServicePage from './pages/TermsOfServicePage';
 
 function App() {
   return (
-    <BrowserRouter>
-      <div className="min-h-screen bg-background font-sans text-secondary">
-        <AnimatePresence mode="wait">
-          <Routes>
-            <Route path="/" element={<SignInPage />} />
-            <Route path="/welcome" element={<WelcomePage />} />
-            <Route path="/introduction" element={<IntroductionPage />} />
-            <Route path="/career-topics" element={<CareerTopicsPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-            {/* --- Add New Routes --- */}
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="/history" element={<ManageHistoryPage />} />
-            <Route path="/language-settings" element={<LanguageSettingsPage />} />
-            <Route path="/feedback" element={<FeedbackPage />} />
-            <Route path="/privacy" element={<PrivacyPolicyPage />} />
-            <Route path="/terms" element={<TermsOfServicePage />} />
-            {/* --- End New Routes --- */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </AnimatePresence>
-      </div>
-    </BrowserRouter>
+    // Remove <BrowserRouter> from here
+    <div className="min-h-screen bg-background font-sans text-secondary">
+      <AnimatePresence mode="wait">
+        <Routes>
+          <Route path="/" element={<SignInPage />} />
+          <Route path="/welcome" element={<WelcomePage />} />
+          <Route path="/introduction" element={<IntroductionPage />} />
+          <Route path="/career-topics" element={<CareerTopicsPage />} />
+          <Route path="/chat" element={<ChatPage />} />
+          {/* Add route for threadId if using URL params */}
+          {/* <Route path="/chat/:threadId" element={<ChatPage />} /> */}
+          {/* --- Add New Routes --- */}
+          <Route path="/account" element={<AccountPage />} />
+          <Route path="/history" element={<ManageHistoryPage />} />
+          <Route path="/language-settings" element={<LanguageSettingsPage />} />
+          <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
+          {/* --- End New Routes --- */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AnimatePresence>
+    </div>
+    // No closing </BrowserRouter> needed here anymore
   );
 }
 

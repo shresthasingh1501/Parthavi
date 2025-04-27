@@ -10,29 +10,34 @@ import {
 import DiscoverPanel from '../sidebar_panels/DiscoverPanel';
 import ThreadsPanelSidebar from '../sidebar_panels/ThreadsPanelSidebar';
 import ProfilePanel from '../sidebar_panels/ProfilePanel';
-import { ActivePanelType } from '../../pages/ChatPage';
+import { ActivePanelType } from '../../pages/ChatPage'; // Assuming type is exported from ChatPage
 import { useMediaQuery } from 'react-responsive';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 interface SidebarProps {
   isExpanded: boolean;
   isMobileOpen: boolean;
   activePanel: ActivePanelType;
-  onPanelChange: (panel: ActivePanelType) => void;
+  onPanelChange: (panel: ActivePanelType) => void; // For changing the active panel view
   openSharePopup: () => void;
   onCloseMobileSidebar: () => void;
+  // Props specifically for ThreadsPanelSidebar
+  onSelectThread: (threadId: string) => void;
+  onNewThread: () => Promise<void>;
+  currentThreadId: string | null;
 }
-
-// Define mobile sidebar width - Set to 100vw
-const sidebarWidthMobile = '100vw'; // <-- Changed to cover full screen
 
 const Sidebar: React.FC<SidebarProps> = ({
     isExpanded,
     isMobileOpen,
     activePanel,
-    onPanelChange,
+    onPanelChange, // Use this for the icon buttons
     openSharePopup,
-    onCloseMobileSidebar
+    onCloseMobileSidebar,
+    // Destructure thread-related props
+    onSelectThread,
+    onNewThread,
+    currentThreadId,
 }) => {
   const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
 
@@ -43,74 +48,76 @@ const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const renderPanelContent = () => {
-    const isSidebarActuallyOpen = (!isMobile && isExpanded) || (isMobile && isMobileOpen);
+    // Determine if the panel area should be visible
+    const isPanelAreaVisible = (!isMobile && isExpanded) || (isMobile && isMobileOpen);
 
-    if (!isSidebarActuallyOpen || activePanel === null) {
-        return null;
+    if (!isPanelAreaVisible || activePanel === null) {
+        return null; // Don't render panel content if sidebar collapsed/closed or no active panel
     }
 
     switch (activePanel) {
       case 'discover':
+        // Discover panel doesn't need thread props
         return <DiscoverPanel onCloseMobileSidebar={onCloseMobileSidebar} />;
       case 'threads':
-        return <ThreadsPanelSidebar onCloseMobileSidebar={onCloseMobileSidebar} />;
+        // *** PASS THREAD PROPS DOWN TO ThreadsPanelSidebar ***
+        return (
+            <ThreadsPanelSidebar
+                onCloseMobileSidebar={onCloseMobileSidebar}
+                onSelectThread={onSelectThread}
+                onNewThread={onNewThread}
+                currentThreadId={currentThreadId}
+            />
+        );
       case 'profile':
+        // Profile panel doesn't need thread props directly, but needs share popup
         return <ProfilePanel openSharePopup={openSharePopup} onCloseMobileSidebar={onCloseMobileSidebar} />;
       default:
         return null;
     }
   };
 
-
   return (
      <div
       className={clsx(
         "bg-background h-screen flex border-r border-gray-200 flex-shrink-0",
       )}
-       // The parent (ChatPage) sets the overall width using motion style animation
     >
-        {/* Icon Buttons Column - Always visible (on screen or off-screen with parent) */}
-        {/* Adjusted mobile padding/width slightly for icons */}
+        {/* Icon Buttons Column */}
         <div className="w-16 md:w-24 h-full flex flex-col items-center py-4 space-y-1 flex-shrink-0 border-r border-gray-200/80 z-10 bg-gray-50/30">
             {/* Mobile Close Button */}
-            {/* Show close button ONLY on mobile when the sidebar is open */}
             {isMobile && isMobileOpen && (
-                 <button
-                    onClick={onCloseMobileSidebar}
-                    className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors mb-4 md:mb-1 w-12 h-12 flex items-center justify-center"
-                    aria-label="Close sidebar"
-                 >
+                 <button onClick={onCloseMobileSidebar} /* ... */ >
                     <ChevronLeft size={20} strokeWidth={2.5}/>
                  </button>
             )}
-             {/* Add empty space if close button is not shown on mobile to keep menu items aligned */}
-             {/* Only add space on mobile if the sidebar is NOT open */}
-             {isMobile && !isMobileOpen && (
-                 <div className="w-12 h-12 mb-4 md:mb-1"></div>
-             )}
-
+             {isMobile && !isMobileOpen && <div className="w-12 h-12 mb-4 md:mb-1"></div>}
 
             {/* Menu Items */}
             {menuItems.map((item) => {
                  const Icon = item.icon;
-                 const isActive = activePanel === item.name && ((!isMobile && isExpanded) || (isMobile && isMobileOpen));
-                 const isSelectedCollapsedDesktop = !isMobile && activePanel === item.name && !isExpanded;
+                 // Determine active state based on whether panel area is visible
+                 const isPanelAreaVisible = (!isMobile && isExpanded) || (isMobile && isMobileOpen);
+                 const isActive = activePanel === item.name && isPanelAreaVisible;
+                 // Highlight icon even if panel area isn't visible but it's the selected panel
+                 const isSelected = activePanel === item.name;
 
                 return (
                     <button
                         key={item.name}
+                        // Use onPanelChange passed from ChatPage here
                         onClick={() => onPanelChange(item.name)}
                         className={clsx(
                            "flex flex-col items-center justify-center py-2 rounded-lg text-secondary transition-colors w-14 md:w-[76px] h-auto min-h-[56px] md:min-h-[60px]",
-                           isActive ? 'bg-white shadow-sm' : 'hover:bg-gray-100',
-                           isSelectedCollapsedDesktop && 'bg-gray-100'
+                           // Style based on selection/activity
+                           isActive ? 'bg-white shadow-sm' : (isSelected ? 'bg-gray-100' : 'hover:bg-gray-100'),
                         )}
                         title={item.label}
                     >
-                        <Icon size={20} strokeWidth={isActive || isSelectedCollapsedDesktop ? 2.5 : 2} className={clsx(isActive ? 'text-primary' : 'text-gray-600')} />
+                        <Icon size={20} strokeWidth={isActive || isSelected ? 2.5 : 2} className={clsx(isActive || isSelected ? 'text-primary' : 'text-gray-600')} />
                         <span className={clsx(
                             "text-[10px] md:text-[11px] font-medium mt-1",
-                             isActive ? 'text-primary' : 'text-gray-700'
+                             isActive || isSelected ? 'text-primary' : 'text-gray-700'
                             )}>
                             {item.label}
                         </span>
@@ -120,14 +127,12 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Expanded Panel Content Area */}
+        {/* Use motion for opacity based on panel visibility */}
         <motion.div
-            className={clsx(
-                "flex-1 flex flex-col overflow-hidden transition-opacity duration-200 ease-in-out",
-                !isMobile && (isExpanded ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none delay-100'),
-                 // Mobile: Content is always visible relative to the icon column when mobile sidebar is open
-                 // Opacity transition handles the fade-in/out of the content itself relative to the main chat
-                 isMobile && isMobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-            )}
+            className="flex-1 flex flex-col overflow-hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: ((!isMobile && isExpanded) || (isMobile && isMobileOpen)) ? 1 : 0 }}
+            transition={{ duration: 0.2, delay: ((!isMobile && isExpanded) || (isMobile && isMobileOpen)) ? 0.1 : 0 }} // Delay fade-in slightly
         >
              {renderPanelContent()}
         </motion.div>
