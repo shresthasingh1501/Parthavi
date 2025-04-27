@@ -329,6 +329,7 @@ const ChatPage = () => {
         // 4. Call Gemini API using the specific original pattern
         try {
              // Check if genAI and the necessary method exist as expected by the original pattern
+             // Use 'genAI.models' property for this check
              if (!genAI || !genAI.models || typeof genAI.models.generateContentStream !== 'function') {
                   console.error("Gemini Client or generateContentStream method is missing or not a function using the original pattern.");
                   // Provide a more informative error if API key is present but the method isn't found
@@ -356,13 +357,15 @@ const ChatPage = () => {
             let streamSource: AsyncIterable<GenerateContentResponse> | null = null;
 
              // Check for both result and result.stream for compatibility with potentially older library versions
+             // The original snippet used `result` directly, so try that first.
              if (result && typeof result[Symbol.asyncIterator] === 'function') {
                  streamSource = result;
-                 console.log("Using result as stream source (potential older version).");
+                 console.log("Using result as stream source (original pattern).");
              }
+             // Fallback to result.stream if the above fails (might happen with slightly different old versions)
              else if (result && result.stream && typeof result.stream[Symbol.asyncIterator] === 'function') {
                  streamSource = result.stream;
-                 console.log("Using result.stream as stream source (potential newer version).");
+                 console.log("Using result.stream as stream source (fallback).");
              }
              else {
                  console.error("Unexpected API response structure from generateContentStream:", result);
@@ -1002,21 +1005,43 @@ const ChatPage = () => {
                          )}
                         {showMessages && (
                             // Messages List - Only render if showMessages is true
-                            <div className="w-full space-y-4 md:space-y-5 pt-4"> {/* Added pt-4 for spacing above first message */}
-                                {messages.map((m) => (
-                                    <ChatMessage
-                                        // Use a stable key. For temporary messages, combine temp ID with timestamp/content part.
-                                        key={m.id || `temp-${m.created_at}-${m.role}-${m.content?.substring(0, 20)}`}
-                                        message={m.content}
-                                        isUser={m.isUser}
-                                        senderName={m.isUser ? (userName || 'You') : 'Parthavi'}
-                                    />
-                                ))}
-                                 {isResponding && ( // Add a typing indicator when AI is responding
-                                    // Provide a stable key for the typing indicator as well
-                                    <ChatMessage key="ai-typing-indicator" message="" isUser={false} senderName="Parthavi" />
-                                 )}
-                            </div>
+                            // Wrap messages with AnimatePresence and motion.div for staggering/layout animation
+                            <motion.div
+                                layout // Animate list layout changes
+                                initial="hidden" // Define initial state for the container
+                                animate="visible" // Define animate state for the container
+                                // Variants defined below the component... or define them here
+                                variants={{
+                                     hidden: { opacity: 0 },
+                                     visible: {
+                                         opacity: 1,
+                                          transition: {
+                                             staggerChildren: 0.08, // Stagger children animations
+                                             delayChildren: 0.1 // Delay the start of children animations
+                                          }
+                                     }
+                                }}
+                                className="w-full space-y-4 md:space-y-5 pt-4" // Apply spacing/padding to this container
+                            >
+                                <AnimatePresence mode="sync"> {/* Use mode="sync" for better control */}
+                                    {messages.map((m, index) => (
+                                        <ChatMessage
+                                            // Use a stable key. For temporary messages, combine temp ID with timestamp/content part.
+                                            // Ensure key changes when temporary message is replaced by permanent one
+                                            key={m.id || `temp-${m.created_at}-${m.role}-${m.content?.substring(0, 20)}`}
+                                            message={m.content}
+                                            isUser={m.isUser}
+                                            senderName={m.isUser ? (userName || 'You') : 'Parthavi'}
+                                            // Pass index as custom prop for stagger animation (optional)
+                                            custom={index}
+                                        />
+                                    ))}
+                                     {isResponding && ( // Add a typing indicator when AI is responding
+                                        // Provide a stable key for the typing indicator as well
+                                        <ChatMessage key="ai-typing-indicator" message="" isUser={false} senderName="Parthavi" />
+                                     )}
+                                </AnimatePresence>
+                            </motion.div>
                         )}
                     </div>
                 </div>
@@ -1024,14 +1049,14 @@ const ChatPage = () => {
                 {/* Chat Input Area */}
                 <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
                     <div className="max-w-4xl mx-auto">
-                        {/* Disable input if loading, responding, or in an error state, or no thread is active */}
+                        {/* Disable input if loading, responding, or in an error state, or no thread is active, or AI client is missing */}
                          <ChatInput
                              value={inputMessage}
                              onChange={handleInputChange}
                              onSendMessage={handleSendMessage}
-                             isResponding={isResponding || chatLoading || showAnyError || (!genAI) || !currentThreadId} // Disable if no thread active
+                             isResponding={isResponding || chatLoading || showAnyError || (!genAI) || !currentThreadId} // Disable if no thread active or AI client missing
                          />
-                         {!genAI && (
+                         {!genAI && ( // Check if AI client is null
                              <p className="text-xs text-red-500 mt-2 text-center px-4"> AI functionality is disabled. Missing API Key. </p>
                          )}
                          {!currentThreadId && !showLoading && !showInitialPlaceholder && !showEmptyThreadPlaceholder && !showAnyError && (
