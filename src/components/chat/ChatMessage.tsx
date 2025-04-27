@@ -20,27 +20,27 @@ const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message, isUser })
     visible: {
       opacity: 1,
       y: 0,
-      transition: { duration: 0.5, ease: "easeOut" } // Slower fade-in for block
+      transition: { duration: 0.5, ease: "easeOut" }
     },
   };
 
    // Animation for the text content itself when it updates (for streaming)
    const textContentVariants = {
-      initial: { opacity: 0.6, x: -5 }, // Start slightly faded and offset
-      animate: { opacity: 1, x: 0 }, // Fade in and slide to final position
-      transition: { duration: 0.25, ease: "easeOut" } // Faster transition for text updates
+      initial: { opacity: 0.6, x: -5 },
+      animate: { opacity: 1, x: 0 },
+      transition: { duration: 0.25, ease: "easeOut" }
    };
 
    // --- Defensively ensure message is a string ---
    const messageContent = typeof message === 'string' ? message : '';
-   // --- Log if it wasn't a string originally ---
    if (typeof message !== 'string') {
        console.warn(`ChatMessage received non-string message prop: type=${typeof message}, value=`, message);
    }
+   // --- End defensive check ---
 
   return (
     <motion.div
-      layout // Enable smooth layout changes if message height changes
+      layout
       variants={messageBlockVariants}
       initial="hidden"
       animate="visible"
@@ -49,31 +49,27 @@ const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message, isUser })
           isUser ? 'justify-end pl-6 md:pl-10 lg:pl-20' : 'justify-start pr-6 md:pr-10 lg:pr-20'
         )}
     >
-      {/* Apply styling based on user or AI */}
+      {/* Styling based on user or AI */}
       <div className={clsx(
           "rounded-xl px-4 py-2.5 shadow-sm max-w-[85%] sm:max-w-[75%]",
           isUser ? "bg-[#F7F1E8] text-secondary" : "bg-gray-100/70 text-secondary"
       )}>
-        {/* Use motion.div for the content to animate text updates */}
+        {/* Motion wrapper for text content animation */}
         <motion.div
-           // Use message content length as key to trigger animation on content change
-           key={messageContent.length} // Use the sanitized string length
+           key={messageContent.length} // Key based on sanitized content length
            initial="initial"
            animate="animate"
            variants={textContentVariants}
            transition={textContentVariants.transition}
-           // Add prose for markdown styling
            className={clsx(
                "text-sm md:text-base whitespace-pre-wrap break-words",
-               // Apply Tailwind prose classes for markdown styling (links, bold, lists)
-               !isUser && "prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-secondary" // Style AI messages only
+               !isUser && "prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-secondary"
            )}
-           style={{ lineHeight: '1.6' }} // Ensure consistent line height
+           style={{ lineHeight: '1.6' }}
         >
-          {/* Render message using ReactMarkdown, passing the guaranteed string */}
+          {/* Render using ReactMarkdown */}
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {messageContent}
-              {/* Removed the || '\u00A0' fallback */}
           </ReactMarkdown>
         </motion.div>
       </div>
