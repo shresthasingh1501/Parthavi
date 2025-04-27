@@ -1,15 +1,38 @@
 // src/pages/ChatPage.tsx
-
-// ... other imports ...
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import { clsx } from 'clsx';
+import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle } from 'lucide-react';
+import { useMediaQuery } from 'react-responsive';
 import { GoogleGenAI, Content, Part, Role, GenerateContentResponse, SystemInstruction } from "@google/genai";
-// ... rest of imports ...
 
+import ChatInput from '../components/chat/ChatInput';
+import ChatMessage from '../components/chat/ChatMessage';
+import Sidebar from '../components/chat/Sidebar';
+import SharePopup from '../components/SharePopup';
+import { useUser } from '../context/UserContext';
+import { supabase } from '../lib/supabaseClient';
+import { Database } from '../types/supabase';
+import { generateRandomTitle } from '../utils';
+import InitialPlaceholder from '../components/chat/InitialPlaceholder';
+import NewThreadPlaceholder from '../components/chat/NewThreadPlaceholder';
+
+// Type definitions
+export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
+type DbMessage = Database['public']['Tables']['messages']['Row'];
+type DisplayMessage = Pick<DbMessage, 'id' | 'role' | 'created_at' | 'content'> & { isUser: boolean; timestamp: string };
+type MessagePayload = Omit<DbMessage, 'id' | 'created_at' | 'updated_at'>;
+type PlaceholderType = 'initial' | 'new_thread' | null;
+
+// Constants
+const SIDEBAR_WIDTH_DESKTOP = 'w-[448px]';
+const SIDEBAR_ICON_WIDTH_DESKTOP = 'md:w-24';
+const SIDEBAR_WIDTH_MOBILE_OPEN = 'w-[85vw] max-w-sm';
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const MODEL_NAME = "gemini-2.0-flash";
 
 // --- System Instruction ---
-// Define the persistent instructions for the AI model
-
-// Make sure this text block doesn't have template literal backticks ` ` around it
-// if you copy-paste, just the raw string content.
 const SYSTEM_INSTRUCTION_TEXT = `
 **Persona & Role:**
 You are Parthavi, an advanced AI career advisor chatbot. Your core mission is to empower Indian women by providing exceptional, personalized, and culturally sensitive guidance for their professional journeys. You act as a knowledgeable, supportive, and encouraging mentor figure.
@@ -32,27 +55,105 @@ Maintain a delicate balance: be professional and insightful, yet simultaneously 
 **Overall Goal:** Be the most helpful, reliable, empowering, and *safe* AI career advisor possible for your specific user group, always operating within your defined ethical boundaries and professional scope.
 `;
 
-// Format for the API (SystemInstruction can often take a simple 'parts' array)
-// Adjust if the specific API structure requires a 'role' property here.
-// Most implementations treat this separately or imply the 'system' role.
-const systemInstructionObject: SystemInstruction = { // Or use 'Content' type if that's more accurate for your SDK version
-    // role: 'system', // Sometimes needed, sometimes implied. Check SDK docs if error occurs.
+// Format for the API
+const systemInstructionObject: SystemInstruction = {
     parts: [{ text: SYSTEM_INSTRUCTION_TEXT }],
 };
 
+// Helper: Save message to DB
+const saveMessageToDb = async (messageData: MessagePayload) => {
+    if (!messageData.user_id) { console.error("Save Error: user_id missing."); return null; }
+    console.log('Background save initiated for:', messageData.role);
+    try {
+        const { data, error } = await supabase.from('messages').insert(messageData).select('id').single();
+        if (error) throw error;
+        console.log(`Background save SUCCESS for ${messageData.role}, ID: ${data?.id}`);
+        return data?.id;
+    } catch (error) { console.error(`Background save FAILED for ${messageData.role}:`, error); return null; }
+};
+
+// Helper: Initialize Gemini Client
+let genAI: GoogleGenAI | null = null;
+if (API_KEY) {
+    try { genAI = new GoogleGenAI({ apiKey: API_KEY }); console.log("Gemini Initialized."); }
+    catch (e) { console.error("Gemini Init Failed:", e); genAI = null; }
+} else { console.warn("VITE_GEMINI_API_KEY not set."); }
+
+// Helper: Format history for API
+const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
+    return messages.map((msg): Content => ({
+        role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }],
+    })).filter(content => content.parts[0].text?.trim());
+};
 
 // --- Component ---
 const ChatPage = () => {
-    // ... existing state, refs, hooks ...
+    // --- Hooks ---
+    const { session, user, loading: userLoading } = useUser();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
+
+    // --- State ---
+    const [currentThreadId, setCurrentThreadId] = useState<string | null>(location.state?.threadId || null);
+    const [messages, setMessages] = useState<DisplayMessage[]>([]);
+    const [inputMessage, setInputMessage] = useState('');
+    const [isResponding, setIsResponding] = useState(false);
+    const [chatLoading, setChatLoading] = useState(true);
+    const [apiError, setApiError] = useState<string | null>(null);
+    const [createThreadError, setCreateThreadError] = useState<string | null>(null);
+    const [placeholderType, setPlaceholderType] = useState<PlaceholderType>(null);
+    const [isDesktopSidebarExpanded, setIsDesktopSidebarExpanded] = useState(true);
+    const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+    const [activePanel, setActivePanel] = useState<ActivePanelType>('discover');
+    const [isSharePopupOpen, setIsSharePopupOpen] = useState(false);
+
+    // --- Refs ---
+    const chatContainerRef = useRef<HTMLDivElement>(null);
+    const sidebarRef = useRef<HTMLDivElement>(null);
+    const isInitialMount = useRef(true);
+
+    // --- Callbacks ---
+    const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+        setTimeout(() => {
+            if (chatContainerRef.current) {
+                chatContainerRef.current.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior });
+            }
+        }, 60);
+    }, []);
+
+    const handleCreateNewThread = useCallback(async (shouldSetActive: boolean = true): Promise<string | null> => {
+        if (!session?.user) { setCreateThreadError("User session not found."); return null; }
+        console.log("Attempting to create new thread...");
+        setChatLoading(true); setMessages([]); setCurrentThreadId(null);
+        setPlaceholderType(null); setCreateThreadError(null); setApiError(null);
+        try {
+            const newTitle = generateRandomTitle();
+            const { data: newThread, error } = await supabase.from('threads').insert({ user_id: session.user.id, title: newTitle }).select('id').single();
+            if (error) throw error;
+            if (!newThread) throw new Error("New thread data missing after insert.");
+            console.log("New thread created:", newThread.id);
+            setCurrentThreadId(newThread.id);
+            setPlaceholderType('new_thread');
+            navigate(location.pathname, { replace: true, state: { threadId: newThread.id } });
+            if (shouldSetActive) { setActivePanel('discover'); }
+            setChatLoading(false);
+            return newThread.id;
+        } catch (error: any) {
+            console.error("Error creating new thread:", error);
+            setCreateThreadError(error.message || "Failed to create new thread.");
+            setChatLoading(false); setCurrentThreadId(null); setPlaceholderType(null);
+            return null;
+        }
+    }, [session, navigate, location.pathname]);
 
     const handleSendMessage = useCallback(async (text: string) => {
-        // ... existing checks ...
         if (!genAI) { setApiError("AI Client not configured."); return; }
         const currentThread = currentThreadId;
         if (!currentThread || isResponding || !session?.user) return;
         const trimmedText = text.trim(); if (!trimmedText) return;
 
-        setPlaceholderType(null);
+        setPlaceholderType(null); // Clear placeholder
         setCreateThreadError(null); setApiError(null);
         const userId = session.user.id;
         setIsResponding(true); setInputMessage('');
@@ -71,14 +172,12 @@ const ChatPage = () => {
         setMessages(prev => [...prev, optimisticAiMsg]);
 
         try {
-            // --- ADD systemInstruction to the request payload ---
             const requestPayload = {
                 model: MODEL_NAME,
                 contents: historyForApi,
-                systemInstruction: systemInstructionObject, // <-- Pass the system instruction here
+                systemInstruction: systemInstructionObject, // Pass system instruction
                 config: { responseMimeType: 'text/plain' },
             };
-            // --- End change ---
 
             if (!genAI) throw new Error("Gemini AI Client lost.");
             const result = await genAI.models.generateContentStream(requestPayload);
@@ -115,9 +214,51 @@ const ChatPage = () => {
             setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: `Error: ${errorMessage}` } : msg));
             scrollToBottom('smooth');
         } finally { setIsResponding(false); }
-    }, [currentThreadId, isResponding, session, messages, scrollToBottom]); // Added systemInstructionObject if it were dynamic
+    }, [currentThreadId, isResponding, session, messages, scrollToBottom]);
 
-    // ... rest of the component code (effects, handlers, JSX) remains exactly the same ...
+    const closeMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
+    const openMobileSidebar = useCallback(() => { if (!activePanel) setActivePanel('discover'); setIsMobileSidebarOpen(true); }, [activePanel]);
+    const collapseDesktopSidebar = useCallback(() => setIsDesktopSidebarExpanded(false), []);
+    const expandDesktopSidebar = useCallback((panel: ActivePanelType) => { setActivePanel(panel || 'discover'); setIsDesktopSidebarExpanded(true); }, []);
+    const handlePanelChange = useCallback((panel: ActivePanelType) => {
+        if (isMobile) {
+            if (isMobileSidebarOpen && activePanel === panel) closeMobileSidebar();
+            else { setActivePanel(panel); setIsMobileSidebarOpen(true); }
+        } else {
+            if (isDesktopSidebarExpanded && activePanel === panel) collapseDesktopSidebar();
+            else expandDesktopSidebar(panel);
+        }
+    }, [isMobile, activePanel, isMobileSidebarOpen, isDesktopSidebarExpanded, closeMobileSidebar, collapseDesktopSidebar, expandDesktopSidebar]);
+    const handleClickOutside = useCallback((event: MouseEvent) => {
+        if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
+            if (isMobile && isMobileSidebarOpen) closeMobileSidebar();
+        }
+    }, [isMobile, isMobileSidebarOpen, closeMobileSidebar]);
+     const handleSelectThread = useCallback((threadId: string) => {
+        if (threadId !== currentThreadId) {
+            console.log("Selecting thread:", threadId);
+            navigate(location.pathname, { replace: true, state: { threadId: threadId } });
+             if (isMobile) closeMobileSidebar();
+        } else {
+             if (isMobile) closeMobileSidebar();
+        }
+    }, [currentThreadId, isMobile, closeMobileSidebar, navigate, location.pathname]);
+     const handlePromptClick = useCallback((prompt: string) => {
+        if (!currentThreadId) {
+            handleCreateNewThread(false).then((newId) => {
+                if (newId) {
+                    // Instead of setting input, directly send the message now
+                    handleSendMessage(prompt);
+                }
+            });
+        } else {
+             // Directly send the message when prompt is clicked
+            handleSendMessage(prompt);
+        }
+    }, [currentThreadId, handleCreateNewThread, handleSendMessage]); // Added handleSendMessage
+    const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
+    const openSharePopup = () => setIsSharePopupOpen(true);
+
     // --- Effects ---
     useEffect(() => { if (!userLoading && !session) navigate('/', { replace: true }); }, [session, userLoading, navigate]);
 
@@ -160,7 +301,7 @@ const ChatPage = () => {
             }
         };
         initializeChat();
-    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]); // Added handleCreateNewThread dep
+    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]);
 
     useEffect(() => {
         if (!isInitialMount.current && messages.length > 0) {
@@ -173,7 +314,6 @@ const ChatPage = () => {
         else document.removeEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
-
 
     // --- Render Logic ---
     if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background">Loading User...</div>;
