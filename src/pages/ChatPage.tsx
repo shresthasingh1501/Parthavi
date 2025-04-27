@@ -15,11 +15,7 @@ import { useUser } from '../context/UserContext';
 import { supabase } from '../lib/supabaseClient';
 import { Database } from '../types/supabase';
 import { generateRandomTitle } from '../utils';
-// --- Corrected Import Name ---
-import NewThreadPlaceholder from '../components/chat/NewThreadPlaceholder';
-// --- Removed old InitialPlaceholder import ---
-// import InitialPlaceholder from '../components/chat/InitialPlaceholder';
-
+import NewThreadPlaceholder from '../components/chat/NewThreadPlaceholder'; // Corrected Import Name
 
 // Type definitions
 export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
@@ -347,27 +343,37 @@ const ChatPage = () => {
 
     // Effect 1: Handle user authentication state changes
     useEffect(() => {
-        if (!userLoading && !session) {
-            console.log("Auth effect: No session found, navigating to /");
-            navigate('/', { replace: true });
-        } else if (!userLoading && session?.user) {
-            console.log("Auth effect: User session found for", session.user.id);
-            // User is signed in, proceed to check/load thread in the next effect
-            // Do NOT set chatLoading here, let the load thread effect handle it.
+        // This effect runs whenever session or userLoading changes.
+        // Its primary job is to redirect if the user signs out or isn't logged in after loading.
+        if (!userLoading) {
+            if (!session) {
+                console.log("Auth effect: User loading complete, no session found, navigating to /");
+                 // Only navigate if not already on the sign-in page
+                 if (location.pathname !== '/') {
+                    navigate('/', { replace: true });
+                 }
+            } else {
+                console.log("Auth effect: User loading complete, session found for", session.user.id);
+                // User is signed in, the next effect will handle thread loading/creation.
+                // No action needed here other than logging.
+            }
+        } else {
+             console.log("Auth effect: User is still loading...");
         }
-    }, [session, userLoading, navigate]); // Depends on session, userLoading, navigate
+    }, [session, userLoading, navigate, location.pathname]); // Depends on session, userLoading, navigate, location.pathname
 
     // Effect 2: Handle initial thread loading or creation based on URL state
     useEffect(() => {
         const currentUserId = session?.user?.id;
         const threadIdFromState = location.state?.threadId;
 
-        // Only proceed if user context is not loading and we have a user
+        // Only proceed if user context is not loading and we have a user AND ChatPage is actually mounted and ready
+        // Add a check to prevent this effect from running before the first render is complete
+        // This helps prevent issues with state updates before the component tree is stable
         if (userLoading || !currentUserId) {
-            console.log("Load/Create Effect: User loading or no user, waiting...");
-            // Keep chatLoading true or let Auth effect handle navigation out
+            console.log("Load/Create Effect: User loading or no user, waiting or handled by Auth Effect.");
+             // If user becomes null after loading, ensure chat state is reset
             if (!currentUserId && !userLoading) {
-                 // User is explicitly null after loading, reset chat state
                  setCurrentThreadId(null);
                  setMessages([]);
                  setChatLoading(false); // Stop loading as no user means no chat to load
@@ -378,17 +384,25 @@ const ChatPage = () => {
             return;
         }
 
-        // Prevent re-running load/create logic if dependencies change but the core chat state is already initialized for the current thread
-        // This also prevents unnecessary re-creation of threads if state changes unrelated to threadId/user
-        if (currentThreadId === threadIdFromState && messages.length > 0) {
-            console.log("Load/Create Effect: Current thread state matches, skipping initialization.");
-            setChatLoading(false); // Ensure loading is off if state matches
-            return;
-        }
+         // Prevent re-running load/create logic if dependencies change but the core chat state is already initialized for the current thread
+         // This also prevents unnecessary re-creation of threads if state changes unrelated to threadId/user
+         // Allow re-initialization if threadIdFromState changes, even if currentThreadId is also set
+         const shouldLoadThread = threadIdFromState && threadIdFromState !== currentThreadId;
+         const shouldCreateThread = !threadIdFromState && currentThreadId === null; // Only create if no ID in state AND no current ID
 
-        console.log("Load/Create Effect: User found, initializing chat logic.", { currentUserId, threadIdFromState });
+         if (!shouldLoadThread && !shouldCreateThread && messages.length > 0 && currentThreadId) {
+             console.log("Load/Create Effect: Current thread state matches and has messages, skipping initialization.");
+             setChatLoading(false); // Ensure loading is off if state matches
+             // Ensure placeholder is null if we have messages
+             if (placeholderType !== null) setPlaceholderType(null);
+             return;
+         }
+
+
+        console.log("Load/Create Effect: User found, initializing chat logic.", { currentUserId, threadIdFromState, currentThreadId, shouldLoadThread, shouldCreateThread });
 
         const initializeChat = async () => {
+            console.log("Load/Create Effect: initializeChat starting...");
             // Reset state for new load/creation attempt
             setChatLoading(true);
             setMessages([]);
@@ -402,34 +416,81 @@ const ChatPage = () => {
             } else {
                 console.log("Load/Create Effect: No thread in state, creating new one.");
                 await handleCreateNewThread(); // Call the updated function
-                // handleCreateNewThread now handles setting state and navigation
+                // handleCreateNewThread now handles setting state, navigation, and placeholder
             }
-             // Note: setChatLoading(false) is now handled within loadExistingThread and handleCreateNewThread
+             console.log("Load/Create Effect: initializeChat finished.");
+             // setChatLoading(false) is handled within loadExistingThread and handleCreateNewThread
         };
 
-        initializeChat();
+         // Trigger initialization only if we need to load or create a thread
+         // And only if the user is loaded and present
+        if (shouldLoadThread || shouldCreateThread) {
+            initializeChat();
+        } else if (!chatLoading) {
+             // If we didn't need to load/create, but we aren't loading, ensure placeholder is set if messages are empty
+             if (messages.length === 0 && placeholderType === null) {
+                  console.log("Load/Create Effect: No load/create needed, messages are empty, setting new_thread placeholder.");
+                  setPlaceholderType('new_thread');
+             }
+             // If we have messages and no placeholder, ensure placeholder is null
+             if (messages.length > 0 && placeholderType !== null) {
+                  console.log("Load/Create Effect: No load/create needed, messages exist, setting placeholder to null.");
+                 setPlaceholderType(null);
+             }
+        }
+
 
          // Flag that the initial render/load is complete after the first run
-        isInitialRenderComplete.current = true;
+         // This is slightly complex with navigation, might need refinement.
+         // For now, let's assume the initial state setup happens here.
+         // isInitialRenderComplete.current = true; // Moved this to a separate effect that checks for user/thread being ready
 
+    }, [session?.user?.id, userLoading, location.state?.threadId, currentThreadId, messages.length, placeholderType, loadExistingThread, handleCreateNewThread]); // Dependencies for loading/creation effect
 
-    }, [session?.user?.id, userLoading, location.state?.threadId, loadExistingThread, handleCreateNewThread]); // Dependencies for loading/creation effect
-
-    // Effect 3: Scroll to bottom when messages update
+    // Effect 3: Scroll to bottom when messages update OR when placeholder appears/changes state
     useEffect(() => {
-         // Only scroll if the initial load is complete AND messages have changed
-        if (isInitialRenderComplete.current && messages.length > 0) {
-             console.log("Messages updated, scrolling to bottom...");
-             scrollToBottom('smooth');
-        } else if (isInitialRenderComplete.current && messages.length === 0 && placeholderType !== null) {
-             // If messages become empty *after* initial render, ensure we still scroll to the placeholder area
-             console.log("Messages empty, placeholder shown, scrolling to bottom...");
-             scrollToBottom('auto');
+         console.log("Scroll Effect triggered. Messages count:", messages.length, "Placeholder:", placeholderType);
+        // Only scroll if the initial render/load is complete AND (messages have changed OR placeholder state has changed)
+        // Check if component is mounted and user is loaded before scrolling
+        if (!userLoading && session?.user) {
+            if (messages.length > 0) {
+                 console.log("Scrolling to bottom (messages).");
+                 scrollToBottom('smooth');
+            } else if (placeholderType !== null) {
+                 // If messages are empty and a placeholder is active, scroll to ensure the placeholder is visible
+                 console.log("Scrolling to bottom (placeholder).");
+                 scrollToBottom('auto'); // Use 'auto' to jump quickly to the placeholder
+            } else {
+                 console.log("Scroll Effect: Messages empty, no placeholder, not scrolling.");
+            }
+        } else {
+             console.log("Scroll Effect: User not loaded or not signed in, skipping scroll.");
         }
-    }, [messages, scrollToBottom, placeholderType]);
+    }, [messages, placeholderType, scrollToBottom, userLoading, session]); // Depend on messages, placeholderType, scroll function, and user state
 
+    // Effect 4: Flag initial render completion after user and initial thread state is resolved
+    useEffect(() => {
+        // This effect runs once user loading is complete and session/currentThreadId are set (or determined to be null)
+        // It signifies that the ChatPage has finished its primary setup based on auth and URL state.
+        if (!userLoading) {
+             console.log("Initial Render Complete Effect: User loading finished.", { user: session?.user?.id, currentThreadId });
+             isInitialRenderComplete.current = true;
+             // Potential place to set placeholderType('initial') if no threadId was in state and no new one was created?
+             // Or rely on Effect 2's logic to set placeholderType('new_thread') when create happens
+             if (!session?.user) {
+                  // If user is not logged in after loading, ensure placeholder is null
+                  setPlaceholderType(null);
+             } else if (messages.length === 0 && currentThreadId === null && !threadError) {
+                 // If user is logged in, but no thread exists (and no error), set placeholder to initial?
+                 // No, handleCreateNewThread should set 'new_thread'. Let's keep it simple.
+                 // The logic in Effect 2 should ensure placeholderType is either 'new_thread' or null correctly.
+             }
+        } else {
+            console.log("Initial Render Complete Effect: User still loading...");
+        }
+    }, [userLoading, session, currentThreadId, messages.length, threadError]); // Depends on user state and initial chat state
 
-    // Effect 4: Handle clicks outside mobile sidebar
+    // Effect 5: Handle clicks outside mobile sidebar
     useEffect(() => {
         const handleGlobalClick = (event: MouseEvent) => {
              // Check if sidebar ref exists and the click is outside of it
@@ -610,6 +671,9 @@ const ChatPage = () => {
         showAnyError
     });
 
+    // Conditionally set exit animation for the mobile overlay based on environment
+    const overlayExitAnimation = process.env.NODE_ENV === 'development' ? {} : { opacity: 0 }; // Empty object disables exit animation
+
 
     return (
         <div className="flex h-screen bg-background text-secondary overflow-hidden">
@@ -619,7 +683,9 @@ const ChatPage = () => {
                      <motion.div
                          initial={{ opacity: 0 }}
                          animate={{ opacity: 1 }}
-                         exit={{ opacity: 0 }}
+                         // --- MODIFIED: Conditionally disable exit in development ---
+                         exit={overlayExitAnimation}
+                         // --- END MODIFIED ---
                          transition={{ duration: 0.2 }}
                          className="fixed inset-0 bg-black/30 z-30 md:hidden"
                          onClick={closeMobileSidebar}
@@ -701,9 +767,9 @@ const ChatPage = () => {
                         {/* Placeholder State (Initial or New Thread) */}
                         {showPlaceholderContent && (
                             <div className="flex-grow flex items-center justify-center w-full"> {/* Use flex-grow */}
-                                {placeholderType === 'initial' && <NewThreadPlaceholder onPromptClick={handlePromptClick} />}
                                 {placeholderType === 'new_thread' && <NewThreadPlaceholder onPromptClick={handlePromptClick} />}
                                 {/* Note: Both initial and new_thread states currently use the same placeholder component */}
+                                {/* The 'initial' placeholder type is primarily for logic, visually it's the same as 'new_thread' */}
                             </div>
                         )}
 
