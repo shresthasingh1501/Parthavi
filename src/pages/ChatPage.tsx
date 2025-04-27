@@ -90,10 +90,12 @@ const saveMessageToDb = async (messageData: MessagePayload) => {
                .from('threads')
                .update({ updated_at: now }) // Update thread timestamp to now
                .eq('id', messageData.thread_id)
-               .select();
+               .select(); // Or .single() if expecting one row back
 
             if (threadUpdateError) {
                  console.error("Error updating thread timestamp after message save:", threadUpdateError);
+                 // Decide if you want to fail the message save if timestamp update fails
+                 // For now, log error but don't re-throw, as message is saved.
             } else {
                 console.log(`Successfully updated thread ${messageData.thread_id} timestamp.`);
             }
@@ -124,7 +126,7 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
         .filter(msg => msg.role === 'user' || msg.role === 'assistant') // Only include user/assistant roles
         .map((msg): Content => ({
             role: msg.role === 'user' ? 'user' : 'model', // Map assistant to model for Gemini
-            parts: [{ text: msg.content }],
+            parts: [{ text: msg.content || '' }], // Ensure content is not null/undefined
         }))
         .filter(content => content.parts[0].text?.trim()); // Filter out messages with empty content
 };
@@ -158,7 +160,8 @@ const ChatPage = () => {
     const [isSharePopupOpen, setIsSharePopupOpen] = useState(false);
 
     const chatContainerRef = useRef<HTMLDivElement>(null);
-    const sidebarRef = useRef<HTMLInputElement>(null); // Use HTMLInputElement or similar for ref type
+    const sidebarRef = useRef<HTMLDivElement>(null); // Corrected ref type
+
 
     // Ref to ensure initial prompt is sent only once per component mount cycle *after* thread is ready
     const initialPromptSent = useRef(false);
@@ -374,6 +377,140 @@ const ChatPage = () => {
     }, [currentThreadId, isResponding, session, messages, scrollToBottom, genAI, systemInstructionObject]); // Added genAI and systemInstructionObject to dependencies
 
 
+    // --- Sidebar and Overlay Callbacks ---
+    // Define these before the effects that use them
+    const closeMobileSidebar = useCallback(() => {
+         console.log("Closing mobile sidebar.");
+         setIsMobileSidebarOpen(false);
+    }, []);
+
+    const openMobileSidebar = useCallback(() => {
+        console.log("Opening mobile sidebar.");
+        // If no active panel is set, default to 'discover' when opening
+        if (activePanel === null) {
+            console.log("No active panel set, defaulting to 'discover'.");
+            setActivePanel('discover');
+        }
+        setIsMobileSidebarOpen(true);
+    }, [activePanel]); // Depends on activePanel
+
+    const collapseDesktopSidebar = useCallback(() => {
+        console.log("Collapsing desktop sidebar.");
+        setIsDesktopSidebarExpanded(false);
+        // Do NOT set activePanel to null here, keep track of which panel was open
+        // activePanel is used to show the correct icon and handle clicking the icon to expand back
+    }, []);
+
+    const expandDesktopSidebar = useCallback((panel: ActivePanelType) => {
+        console.log("Expanding desktop sidebar to panel:", panel);
+        // Ensure a panel is set if expanding
+        setActivePanel(panel || 'discover');
+        setIsDesktopSidebarExpanded(true);
+    }, []);
+
+    const handlePanelChange = useCallback((panel: ActivePanelType) => {
+        console.log("handlePanelChange:", panel);
+        if (isMobile) {
+            // On mobile, clicking the same panel icon closes it
+            if (isMobileSidebarOpen && activePanel === panel) {
+                 console.log("Mobile: Clicking same panel, closing sidebar.");
+                 closeMobileSidebar();
+             } else {
+                 console.log("Mobile: Clicking different panel or sidebar closed, opening sidebar to:", panel);
+                 setActivePanel(panel);
+                 setIsMobileSidebarOpen(true); // Ensure sidebar opens
+             }
+        } else {
+             // On desktop, clicking the same panel icon collapses it
+            if (isDesktopSidebarExpanded && activePanel === panel) {
+                 console.log("Desktop: Clicking same panel, collapsing sidebar.");
+                collapseDesktopSidebar();
+            } else {
+                 console.log("Desktop: Clicking different panel or sidebar collapsed, expanding sidebar to:", panel);
+                expandDesktopSidebar(panel); // Expand sidebar to the new panel
+            }
+        }
+    }, [isMobile, activePanel, isMobileSidebarOpen, isDesktopSidebarExpanded, closeMobileSidebar, collapseDesktopSidebar, expandDesktopSidebar]);
+
+
+    // --- Click Outside Sidebar Callback ---
+    // Define this here, before the effect that uses it
+    const handleClickOutside = useCallback((event: MouseEvent) => {
+        // If sidebar is mobile open and click is outside the sidebar ref, close it
+        if (isMobile && isMobileSidebarOpen && sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
+             console.log("Click outside mobile sidebar, closing...");
+            closeMobileSidebar();
+        }
+    }, [isMobile, isMobileSidebarOpen, closeMobileSidebar]); // Depends on mobile state, sidebar open state, and close function
+
+
+     // --- Handle Select Thread ---
+     const handleSelectThread = useCallback((threadId: string) => {
+        console.log("handleSelectThread:", threadId, "Current Thread:", currentThreadId);
+        if (threadId !== currentThreadId) {
+            // Navigate to the same page but update the state with the new threadId
+            // This will trigger the useEffect to load messages for the new thread
+            console.log(`Selecting new thread ${threadId}, navigating.`);
+            // Clear messages and set loading immediately for perceived responsiveness
+             setMessages([]);
+             setChatLoading(true);
+             setPlaceholderType(null);
+             setApiError(null);
+             setCreateThreadError(null);
+             initialPromptSent.current = false; // Reset prompt flag for the new thread selection
+
+            navigate(location.pathname, { replace: true, state: { threadId: threadId } });
+             // Close sidebar regardless on mobile after selecting a thread
+             if (isMobile) {
+                 console.log("Mobile: Thread selected, closing sidebar.");
+                 closeMobileSidebar();
+            }
+        } else {
+             console.log("Clicked on current thread. No navigation needed.");
+             // If it's the current thread, just close the sidebar on mobile
+             if (isMobile) {
+                 console.log("Mobile: Current thread selected, closing sidebar.");
+                 closeMobileSidebar();
+            }
+        }
+    }, [currentThreadId, isMobile, closeMobileSidebar, navigate, location.pathname]); // Added location dependencies for navigate
+
+
+     // This is the function passed to NewThreadPlaceholder/InitialPlaceholder
+     const handlePromptClick = useCallback((prompt: string) => {
+        console.log("Prompt Clicked:", prompt, "Current Thread:", currentThreadId);
+        if (!currentThreadId) {
+            // If no thread is active, create one first, then send the message
+            console.log("No active thread, creating one before sending prompt.");
+            handleCreateNewThread().then((newId) => {
+                if (newId) {
+                    // Wait slightly before sending message to ensure state updates
+                    setTimeout(() => {
+                         console.log("New thread created, sending prompt after delay.");
+                        handleSendMessage(prompt);
+                    }, 50); // Small delay might help state stabilize
+                } else {
+                    console.error("Failed to create new thread from prompt click.");
+                    // Error state should already be set by handleCreateNewThread
+                }
+            });
+        } else {
+            // If a thread is active, just send the message
+            console.log("Active thread found, sending prompt directly.");
+            handleSendMessage(prompt);
+        }
+         // Ensure sidebar closes on mobile after selecting a prompt/starting chat
+         if (isMobile && isMobileSidebarOpen) {
+             console.log("Mobile: Prompt clicked, closing sidebar.");
+             closeMobileSidebar();
+         }
+    }, [currentThreadId, handleCreateNewThread, handleSendMessage, isMobile, isMobileSidebarOpen, closeMobileSidebar]);
+
+
+    const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
+    const openSharePopup = () => setIsSharePopupOpen(true);
+
+
     // --- Main Effect for Loading Threads/Messages and Initialization ---
     useEffect(() => {
         const currentUserId = session?.user?.id;
@@ -403,8 +540,8 @@ const ChatPage = () => {
         }
 
         // If user is loaded and present, proceed with initialization logic
-        const initializeChat = async () => {
-             console.log("initializeChat START: User ID:", currentUserId, "Thread ID from state:", threadIdFromState);
+        const initializeChat = async (userId: string, initialThreadIdFromState: string | null) => {
+             console.log("initializeChat START: User ID:", userId, "Initial Thread ID from state:", initialThreadIdFromState);
 
             // Always start by clearing old state and showing loading
             setChatLoading(true);
@@ -414,19 +551,19 @@ const ChatPage = () => {
             setPlaceholderType(null); // Clear any previous placeholder
 
 
-            if (threadIdFromState) {
-                console.log("initializeChat: Attempting to load messages for existing thread:", threadIdFromState);
-                setCurrentThreadId(threadIdFromState); // Set current thread ID immediately
+            if (initialThreadIdFromState) {
+                console.log("initializeChat: Attempting to load messages for existing thread:", initialThreadIdFromState);
+                setCurrentThreadId(initialThreadIdFromState); // Set current thread ID immediately
 
                  try {
                     // Fetch messages for the specific thread ID
-                    console.log(`Fetching messages for thread: ${threadIdFromState}`);
+                    console.log(`Fetching messages for thread: ${initialThreadIdFromState}`);
                     const { data: existingMessages, error: messagesError } = await supabase
                         .from('messages')
                         .select('*')
-                        .eq('thread_id', threadIdFromState)
+                        .eq('thread_id', initialThreadIdFromState)
                          // Filter by user_id even with RLS off for data integrity
-                         .eq('user_id', currentUserId)
+                         .eq('user_id', userId)
                         .order('created_at', { ascending: true });
 
                     console.log("initializeChat: Supabase messages fetch result:", { data: existingMessages, error: messagesError });
@@ -454,9 +591,12 @@ const ChatPage = () => {
                     if (formattedMessages.length === 0) {
                         console.log("initializeChat: No messages found for this thread, showing 'new_thread' placeholder.");
                          setPlaceholderType('new_thread'); // If thread exists but is empty
+                         // Keep currentThreadId set if the fetch was successful but returned empty
+                         setCurrentThreadId(initialThreadIdFromState);
                     } else {
                         console.log("initializeChat: Messages loaded, no placeholder needed.");
                         setPlaceholderType(null); // If messages were loaded
+                         setCurrentThreadId(initialThreadIdFromState); // Ensure thread ID is set
                     }
 
 
@@ -472,14 +612,19 @@ const ChatPage = () => {
                      setChatLoading(false); // Stop loading
                      hasInitialized.current = true; // Mark initialization complete
                      // Scroll only if messages were loaded successfully
-                     if (messages.length > 0) {
-                          requestAnimationFrame(() => scrollToBottom('auto')); // Initial scroll
+                     // Also scroll if we are showing a placeholder, to ensure it's in view
+                     if (messages.length > 0 || placeholderType !== null) { // Check messages.length > 0 OR placeholderType is not null (from previous state)
+                          // Need to re-evaluate scroll trigger here. Maybe scroll after state update effect runs?
+                          // Let's remove scroll from here for now and rely on the messages/placeholder state effect.
+                          // requestAnimationFrame(() => scrollToBottom('auto')); // Initial scroll
                      }
+                     // Ensure initialPromptSent is false when loading is complete, ready for potential prompt
+                     initialPromptSent.current = false;
                  }
 
             } else {
                 // No threadId in state on load - this is the initial landing or direct /chat navigation
-                console.log("initializeChat: No thread ID in state, assuming new session or navigation. Showing initial placeholder.");
+                console.log("initializeChat: No thread ID in state on initial load, assuming new session or navigation. Showing initial placeholder.");
                 // Set initial placeholder and loading false immediately.
                 setPlaceholderType('initial'); // Show the initial welcome placeholder
                 setChatLoading(false); // Stop loading state
@@ -490,18 +635,29 @@ const ChatPage = () => {
             }
         };
 
-        // Execute initialization only once after user context is ready
-        // This check prevents re-running initializeChat on every location state change
-        // unless the threadId itself changes OR the user changes.
-         const isFirstInitAttempt = !hasInitialized.current;
-         const userIdChanged = currentUserId !== (session?.user?.id); // Check if user ID actually changed
-         const threadIdChanged = threadIdFromState !== currentThreadId; // Check if thread ID in state differs from current state
+        // Execute initialization when user context is ready AND
+        // when the user ID changes OR the threadId in the URL state changes.
+        // This prevents unnecessary re-runs.
+         const threadIdInState = location.state?.threadId;
+         const userIdChanged = currentUserId !== session?.user?.id; // Redundant check as effect dependency covers this? Re-evaluate.
+         // Let's simplify: run if user is loaded and it's the first init attempt OR the threadId in state has changed
+         // We also need to consider when the user object itself changes (e.g., after profile update)
 
-         if (isFirstInitAttempt || userIdChanged || threadIdChanged) {
-             console.log("Running initializeChat:", {isFirstInitAttempt, userIdChanged, threadIdChanged, currentThreadId, threadIdFromState});
-             initializeChat();
+        // Determine if initialization should run
+        const shouldInitialize = !hasInitialized.current || (currentUserId && threadIdInState !== currentThreadId);
+        console.log("ChatPage Load Effect Decision:", { shouldInitialize, hasInitialized: hasInitialized.current, currentUserId, threadIdInState, currentThreadId });
+
+
+         if (shouldInitialize) {
+             console.log("Running initializeChat...");
+              // Pass the user ID and thread ID from state explicitly
+             initializeChat(currentUserId, threadIdInState);
          } else {
-             console.log("Skipping initializeChat: User/Thread ID not changed and already initialized.");
+             console.log("Skipping initializeChat...");
+             // If we are skipping, ensure loading is off IF user is loaded and there's no active error
+              if (!userLoading && !apiError && !createThreadError) {
+                   setChatLoading(false);
+              }
          }
 
 
@@ -510,14 +666,21 @@ const ChatPage = () => {
            // No direct Supabase subscriptions are managed here currently,
            // they are in the ThreadsPanelSidebar. If you add any here, clean them up.
             console.log("ChatPage Load Effect Cleanup.");
+             // Ensure hasInitialized is reset if the component unmounts or user logs out
+             // This is important for proper re-initialization if the user signs back in without a full page reload
+             if (!session?.user) { // If the user is signing out or session is ending
+                 hasInitialized.current = false;
+                 initialPromptSent.current = false;
+             }
         };
 
     // Dependencies: Re-run effect when session user changes or the threadId in the URL state changes, or userLoading finishes
-    // userLoading is included to ensure the effect runs *after* user context is resolved
+    // This effect manages the *initial* load based on URL/user state.
     }, [session?.user?.id, userLoading, location.state?.threadId, navigate, location.pathname, handleCreateNewThread, scrollToBottom]);
 
 
     // Effect to handle initial prompts from location state (e.g., from CareerTopicsPage)
+    // This effect runs *after* the main load effect has potentially finished and set hasInitialized.current = true
     useEffect(() => {
         const initialPrompt = location.state?.initialPrompt;
         console.log("Initial Prompt Effect: initialPrompt:", initialPrompt, "currentThreadId:", currentThreadId, "chatLoading:", chatLoading, "isResponding:", isResponding, "messages.length:", messages.length, "hasInitialized:", hasInitialized.current, "initialPromptSent:", initialPromptSent.current);
@@ -530,72 +693,89 @@ const ChatPage = () => {
         // 5. Initialization is complete (`hasInitialized.current`)
         // 6. The prompt hasn't been sent for this thread lifecycle (`!initialPromptSent.current`)
         // 7. There are no *user* messages currently displayed (allows retrying prompt if AI failed, but not if user typed)
+        // 8. There are no active errors
         const userMessagesCount = messages.filter(m => m.isUser).length;
 
 
-        if (initialPrompt && currentThreadId && !chatLoading && !isResponding && hasInitialized.current && !initialPromptSent.current && userMessagesCount === 0) {
+        if (initialPrompt && currentThreadId && !chatLoading && !isResponding && hasInitialized.current && !initialPromptSent.current && userMessagesCount === 0 && !apiError && !createThreadError) {
              console.log("Initial Prompt Effect: Sending initial prompt:", initialPrompt);
              initialPromptSent.current = true; // Mark prompt as sent for this thread lifecycle
              // Add a small delay before sending message to ensure state updates from thread creation are fully processed
+             // And to allow UI to render the new empty thread state
              setTimeout(() => {
                  handleSendMessage(initialPrompt);
-             }, 100); // Short delay
+             }, 150); // Increased delay slightly
 
-
-             // IMPORTANT: Clear the initialPrompt from state after sending
-             // This prevents the prompt from being re-sent if the component re-renders
+             // IMPORTANT: Clear the initialPrompt from state AFTER the message is sent (or slightly after the timeout starts)
+             // This prevents the prompt from being re-sent if the component re-renders before the timeout finishes
               console.log("Initial Prompt Effect: Clearing prompt from location state.");
               // Create a new state object without the initialPrompt property
               const newState = { ...location.state };
               delete newState.initialPrompt;
-              navigate(location.pathname, { replace: true, state: newState });
+               // Use a timeout for navigation as well to ensure it happens after the message send logic starts
+               setTimeout(() => {
+                  navigate(location.pathname, { replace: true, state: newState });
+               }, 100); // Slightly less delay than send message
 
-        } else if (initialPrompt && hasInitialized.current && initialPromptSent.current) {
-            // Case where prompt was present and sent, but component re-rendered. Clear state.
-             console.log("Initial Prompt Effect: Prompt already processed, clearing from location state.");
-             const newState = { ...location.state };
-             delete newState.initialPrompt;
-             navigate(location.pathname, { replace: true, state: newState });
-        } else if (initialPrompt && !hasInitialized.current) {
-             // Case where prompt is present but initialization isn't complete yet. Wait.
-             console.log("Initial Prompt Effect: Waiting for initialization before sending prompt.");
-        } else if (initialPrompt && userMessagesCount > 0) {
-             // Case where prompt is present but user has already typed something. Clear state.
-             console.log("Initial Prompt Effect: User has typed messages, ignoring initial prompt from state.");
+        } else if (initialPrompt && hasInitialized.current) {
+            // Cases where prompt is present but already sent, or user has typed, or there's an error. Clear state.
+             console.log("Initial Prompt Effect: Prompt present but condition not met or already processed. Clearing from location state.");
              const newState = { ...location.state };
              delete newState.initialPrompt;
              navigate(location.pathname, { replace: true, state: newState });
         }
+        // No dependency needed for initialPromptSent.current inside this effect's dependency array
+        // as we only read its value once at the start of the effect execution.
 
+    }, [location.state?.initialPrompt, currentThreadId, chatLoading, isResponding, messages.length, hasInitialized.current, navigate, location.pathname, handleSendMessage, messages, apiError, createThreadError]); // Added error dependencies
 
-    }, [location.state?.initialPrompt, currentThreadId, chatLoading, isResponding, messages.length, hasInitialized.current, navigate, location.pathname, handleSendMessage, messages]);
-
-
-     // Effect for scroll to bottom whenever messages change, but NOT on initial render
+     // Effect for initial scroll on mount (if messages are already there)
+     // and subsequent scrolls when messages update after initialization
      useEffect(() => {
-         // Only scroll after initialization is complete and messages change
-        if (hasInitialized.current && messages.length > 0) {
-             console.log("Messages updated (after init), scrolling to bottom.");
-             scrollToBottom('smooth');
-         } else if (hasInitialized.current && messages.length === 0) {
-              // If messages become 0 after initialization, might need to scroll up or do nothing
-              // For now, don't auto-scroll down if the list empties unexpectedly after init
-              console.log("Messages updated (after init), now empty. Not auto-scrolling.");
-         } else if (!hasInitialized.current) {
-              console.log("Messages updated (before init). Not auto-scrolling yet.");
+         console.log("Scroll Trigger Effect: messages.length:", messages.length, "hasInitialized:", hasInitialized.current, "chatLoading:", chatLoading);
+         // Initial scroll right after messages are loaded on mount AND initialization is complete
+         // Or scroll when messages are updated *after* initialization is complete
+         if (hasInitialized.current && messages.length > 0) {
+             console.log("Scroll Trigger Effect: Scrolling to bottom.");
+              // Use requestAnimationFrame and maybe a small timeout to ensure DOM is ready
+              requestAnimationFrame(() => {
+                  setTimeout(() => {
+                      scrollToBottom('smooth');
+                  }, 50);
+              });
+         } else if (hasInitialized.current && messages.length === 0 && placeholderType !== null) {
+             // If initialization is done and there are no messages but a placeholder IS set,
+             // scroll to the placeholder location (usually the middle of the container).
+             console.log("Scroll Trigger Effect: No messages, placeholder visible. Scrolling to center (approx).");
+              requestAnimationFrame(() => {
+                 setTimeout(() => {
+                      // This is an approximation, scrolling to center might require more complex logic
+                      // For now, just scroll to top or let CSS centering handle it.
+                      // Let's just scroll to top in this case.
+                     if (chatContainerRef.current) chatContainerRef.current.scrollTo({ top: 0, behavior: 'auto' });
+                 }, 50);
+              });
+         } else {
+              console.log("Scroll Trigger Effect: No scroll needed yet or conditions not met.");
          }
-     }, [messages, scrollToBottom, hasInitialized.current]);
+     // Depend on messages state, placeholder state, and initialization status
+     }, [messages, placeholderType, hasInitialized.current, scrollToBottom]);
 
 
     // Effect for click outside sidebar on mobile
     useEffect(() => {
         if (isMobile && isMobileSidebarOpen) {
             document.addEventListener('mousedown', handleClickOutside);
+             console.log("Added mousedown listener for handleClickOutside.");
         } else {
             document.removeEventListener('mousedown', handleClickOutside);
+             console.log("Removed mousedown listener for handleClickOutside.");
         }
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
+        return () => {
+             document.removeEventListener('mousedown', handleClickOutside);
+             console.log("Cleanup: Removed mousedown listener for handleClickOutside.");
+        }
+    }, [isMobile, isMobileSidebarOpen, handleClickOutside]); // Depends on mobile state, sidebar state, and the callback itself
 
 
     // --- Rendering Logic Flags ---
