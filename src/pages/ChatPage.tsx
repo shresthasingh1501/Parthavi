@@ -8,10 +8,10 @@ import { useMediaQuery } from 'react-responsive';
 import { GoogleGenAI, Content, Part, Role, GenerateContentResponse, SystemInstruction } from "@google/genai";
 
 import ChatInput from '../components/chat/ChatInput';
-import ChatMessage from '../components/chat/ChatMessage'; // Ensure import
+import ChatMessage from '../components/chat/ChatMessage';
 import Sidebar from '../components/chat/Sidebar';
 import SharePopup from '../components/SharePopup';
-import { useUser } from '../context/UserContext'; // Ensure useUser is imported
+import { useUser } from '../context/UserContext';
 import { supabase } from '../lib/supabaseClient';
 import { Database } from '../types/supabase';
 import { generateRandomTitle } from '../utils';
@@ -55,12 +55,8 @@ Maintain a delicate balance: be professional and insightful, yet simultaneously 
 **Overall Goal:** Be the most helpful, reliable, empowering, and *safe* AI career advisor possible for your specific user group, always operating within your defined ethical boundaries and professional scope.
 `;
 
-// Format for the API
-const systemInstructionObject: SystemInstruction = {
-    parts: [{ text: SYSTEM_INSTRUCTION_TEXT }],
-};
+const systemInstructionObject: SystemInstruction = { parts: [{ text: SYSTEM_INSTRUCTION_TEXT }] };
 
-// Helper: Save message to DB
 const saveMessageToDb = async (messageData: MessagePayload) => {
     if (!messageData.user_id) { console.error("Save Error: user_id missing."); return null; }
     console.log('Background save initiated for:', messageData.role);
@@ -72,30 +68,23 @@ const saveMessageToDb = async (messageData: MessagePayload) => {
     } catch (error) { console.error(`Background save FAILED for ${messageData.role}:`, error); return null; }
 };
 
-// Helper: Initialize Gemini Client
 let genAI: GoogleGenAI | null = null;
 if (API_KEY) {
     try { genAI = new GoogleGenAI({ apiKey: API_KEY }); console.log("Gemini Initialized."); }
     catch (e) { console.error("Gemini Init Failed:", e); genAI = null; }
 } else { console.warn("VITE_GEMINI_API_KEY not set."); }
 
-// Helper: Format history for API
 const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
     return messages.map((msg): Content => ({
         role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }],
     })).filter(content => content.parts[0].text?.trim());
 };
 
-// --- Component ---
 const ChatPage = () => {
-    // --- Hooks ---
-    // --- GET userName from context ---
     const { session, user, userName, loading: userLoading } = useUser();
     const navigate = useNavigate();
     const location = useLocation();
     const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
-
-    // --- State ---
     const [currentThreadId, setCurrentThreadId] = useState<string | null>(location.state?.threadId || null);
     const [messages, setMessages] = useState<DisplayMessage[]>([]);
     const [inputMessage, setInputMessage] = useState('');
@@ -108,13 +97,10 @@ const ChatPage = () => {
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
     const [activePanel, setActivePanel] = useState<ActivePanelType>('discover');
     const [isSharePopupOpen, setIsSharePopupOpen] = useState(false);
-
-    // --- Refs ---
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const sidebarRef = useRef<HTMLDivElement>(null);
     const isInitialMount = useRef(true);
 
-    // --- Callbacks ---
     const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
         setTimeout(() => {
             if (chatContainerRef.current) {
@@ -168,9 +154,11 @@ const ChatPage = () => {
         const userMessagePayload: MessagePayload = { thread_id: currentThread, content: trimmedText, role: 'user', user_id: userId };
         saveMessageToDb(userMessagePayload).catch(err => console.error("Error saving user message:", err));
 
+        // --- Add placeholder AI message (initially empty content) ---
         const tempAiMsgId = `temp-ai-${Date.now()}`;
         const optimisticAiMsg: DisplayMessage = { id: tempAiMsgId, content: '', isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString() };
         setMessages(prev => [...prev, optimisticAiMsg]);
+        // Don't scroll yet, wait for content
 
         try {
             const requestPayload = {
@@ -185,7 +173,7 @@ const ChatPage = () => {
             if (!genAI) throw new Error("Gemini AI Client lost.");
             const result = await genAI.models.generateContentStream(requestPayload);
 
-            let accumulatedResponse = "";
+            let accumulatedResponse = ""; // Accumulate text here
             let streamSource: AsyncIterable<GenerateContentResponse> | null = null;
 
             if (result && typeof result[Symbol.asyncIterator] === 'function') streamSource = result;
@@ -193,32 +181,51 @@ const ChatPage = () => {
             else throw new Error(`Unexpected API response structure: ${JSON.stringify(result).substring(0,100)}...`);
 
             if (streamSource) {
+                // --- Collect full response *without* updating state ---
                 for await (const chunk of streamSource) {
                     const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (chunkText) {
                         accumulatedResponse += chunkText;
-                        setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: accumulatedResponse } : msg));
+                        // *** REMOVED setMessages call from inside the loop ***
                     }
                 }
             }
-            scrollToBottom('smooth');
 
+            // --- Update state ONCE after stream finishes ---
             if (accumulatedResponse) {
+                setMessages(prev => prev.map(msg =>
+                    msg.id === tempAiMsgId
+                        ? { ...msg, content: accumulatedResponse } // Set the full content
+                        : msg
+                ));
+                // Save the complete message to DB
                 const aiMessagePayload: MessagePayload = { thread_id: currentThread, content: accumulatedResponse, role: 'assistant', user_id: userId };
                 saveMessageToDb(aiMessagePayload).catch(err => console.error("Error saving AI message:", err));
             } else {
                 console.warn("AI generated empty response.");
-                setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: "[No text content received]" } : msg));
+                // Update the placeholder message to indicate no response
+                setMessages(prev => prev.map(msg =>
+                    msg.id === tempAiMsgId ? { ...msg, content: "[No text content received]" } : msg
+                ));
             }
+            // Scroll after the final content is set
+            scrollToBottom('smooth');
+
         } catch (aiError: any) {
             console.error("Gemini API call error:", aiError);
             const errorMessage = aiError.message || "An unknown API error occurred.";
             setApiError(errorMessage);
-            setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: `Error: ${errorMessage}` } : msg));
+            // Update the placeholder message with error
+            setMessages(prev => prev.map(msg =>
+                msg.id === tempAiMsgId ? { ...msg, content: `Error: ${errorMessage}` } : msg
+            ));
             scrollToBottom('smooth');
-        } finally { setIsResponding(false); }
-    }, [currentThreadId, isResponding, session, messages, scrollToBottom]);
+        } finally {
+            setIsResponding(false); // Stop responding indicator regardless of success/error
+        }
+    }, [currentThreadId, isResponding, session, messages, scrollToBottom]); // Dependencies
 
+    // Other callbacks (closeMobileSidebar, etc.) remain the same...
     const closeMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
     const openMobileSidebar = useCallback(() => { if (!activePanel) setActivePanel('discover'); setIsMobileSidebarOpen(true); }, [activePanel]);
     const collapseDesktopSidebar = useCallback(() => setIsDesktopSidebarExpanded(false), []);
@@ -259,6 +266,7 @@ const ChatPage = () => {
     }, [currentThreadId, handleCreateNewThread, handleSendMessage]);
     const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
     const openSharePopup = () => setIsSharePopupOpen(true);
+
 
     // --- Effects ---
     useEffect(() => { if (!userLoading && !session) navigate('/', { replace: true }); }, [session, userLoading, navigate]);
@@ -302,13 +310,15 @@ const ChatPage = () => {
             }
         };
         initializeChat();
-    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]); // Added handleCreateNewThread dep
+    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]);
 
     useEffect(() => {
+        // This effect will run AFTER the state update with the full message,
+        // ensuring scroll happens after content is potentially rendered.
         if (!isInitialMount.current && messages.length > 0) {
              scrollToBottom('smooth');
         }
-    }, [messages, scrollToBottom]);
+    }, [messages, scrollToBottom]); // Depend only on messages and scroll function
 
     useEffect(() => {
         if (isMobile && isMobileSidebarOpen) document.addEventListener('mousedown', handleClickOutside);
@@ -343,17 +353,7 @@ const ChatPage = () => {
                         {showAnyPlaceholder && placeholderType === 'initial' && <div className="flex-1 flex items-center justify-center w-full"><InitialPlaceholder onPromptClick={handlePromptClick} /></div>}
                         {showAnyPlaceholder && placeholderType === 'new_thread' && <div className="flex-1 flex items-center justify-center w-full"><NewThreadPlaceholder onPromptClick={handlePromptClick} /></div>}
                         {showAnyError && <div className="flex-1 flex items-center justify-center w-full"><div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'><AlertCircle className="w-8 h-8 mb-3 text-red-400" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div></div>}
-                        {/* --- Pass senderName to ChatMessage --- */}
-                        {showMessagesList && <div className="w-full space-y-4 md:space-y-5"> {/* Increased spacing slightly for names */}
-                            {messages.map((m) => (
-                                <ChatMessage
-                                    key={m.id}
-                                    message={m.content}
-                                    isUser={m.isUser}
-                                    senderName={m.isUser ? (userName || 'You') : 'Parthavi'} // Pass name here
-                                />
-                            ))}
-                        </div>}
+                        {showMessagesList && <div className="w-full space-y-4 md:space-y-5">{messages.map((m) => <ChatMessage key={m.id} message={m.content} isUser={m.isUser} senderName={m.isUser ? (userName || 'You') : 'Parthavi'} />)}</div>}
                     </div>
                 </div>
                 <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
