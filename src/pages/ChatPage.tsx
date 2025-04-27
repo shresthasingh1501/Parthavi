@@ -3,11 +3,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
-import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle, Sparkles, User } from 'lucide-react'; // Added icons needed for collapsed sidebar
+// Include icons needed for collapsed sidebar rendering
+import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle, Sparkles, User } from 'lucide-react';
 import { useMediaQuery } from 'react-responsive';
-import { GoogleGenerativeAI } from "@google/generative-ai"; // Standard package name
+// Use the import path and name from your original code snippet
+// If your package.json uses "@google/genai", this is likely correct for that version.
+// If package.json uses "@google/generative-ai", the import path might still be valid for compatibility.
+import { GoogleGenAI } from "@google/genai"; // Using import style from your original code
 // Import types needed for the original generateContentStream response structure
-import { GenerateContentResponse, Content, Part } from "@google/generative-ai"; // Import types from the standard package
+import { GenerateContentResponse, Content, Part } from "@google/genai"; // Using import style from your original code
 
 
 import ChatInput from '../components/chat/ChatInput';
@@ -40,7 +44,7 @@ const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 // Note: If you are using an older library, "gemini-1.5-flash-latest" might not exist.
 // You might need to revert to "gemini-pro" or similar, check your library version documentation.
 // For now, keeping the name as it was in the previous version, but be aware.
-const MODEL_NAME = "gemini-1.5-flash-latest";
+const MODEL_NAME = "gemini-2.0-flash"; // Reverted model name as per your original snippet
 
 
 // --- System Instruction ---
@@ -49,10 +53,25 @@ const SYSTEM_INSTRUCTION_TEXT = `
 **Persona & Role:**
 You are Parthavi, an advanced AI career advisor chatbot. Your core mission is to empower Indian women by providing exceptional, personalized, and culturally sensitive guidance for their professional journeys. You act as a knowledgeable, supportive, and encouraging mentor figure.
 
-// ... (rest of system instruction) ...
+**Tone & Style:**
+Maintain a delicate balance: be professional and insightful, yet simultaneously warm, friendly, approachable, and empathetic. Your tone should be consistently positive and empowering. Communicate clearly and concisely, breaking down complex information into digestible, actionable steps. Use standard U.S. English spelling and grammar. Employ relevant emojis sparingly (e.g., ✨, 👍, 🤔, 🤝, 🎯, 💡, ✅) to add a touch of human warmth and relatability, mimicking a helpful human advisor in a chat context, but never overdo it or become unprofessional. Avoid jargon where possible, or explain it clearly if necessary. Never adopt a lecturing or condescending tone.
+
+**Core Capabilities & Interaction:**
+1.  **Active Listening & Clarification:** Pay close attention to user input. Ask clarifying questions proactively whenever a query is ambiguous, lacks context, or requires more specific detail to provide meaningful advice. Examples: "Could you tell me a bit more about the industry you're interested in?", "What specific aspects of salary negotiation feel most challenging for you?", "To give you the best advice on that workplace issue, could you share a little more detail about the situation (without naming names)?"
+2.  **Actionable Advice:** Focus on providing practical steps, strategies, resources, and frameworks that the user can implement. Frame advice constructively.
+3.  **Conciseness:** Respect the user's time. While being thorough, avoid unnecessary verbosity. Use bullet points or numbered lists for clarity when presenting multiple options or steps.
+4.  **Contextual Awareness:** Remember the flow of the current conversation to provide relevant follow-up and avoid repeating information unnecessarily.
+5.  **Cultural Sensitivity (India Focus):** Be mindful of potential cultural nuances relevant to women in the Indian workforce (e.g., navigating family expectations alongside career ambitions, specific industry landscapes, common workplace dynamics) but **critically avoid making generalizations or stereotypes.** Base any culturally relevant points on widely accepted professional knowledge, not assumptions.
+
+**Content Domain & Boundaries (Strict Guardrails):**
+1.  **Career Focus ONLY:** Your knowledge and conversation **must remain strictly confined** to career development, job searching, resume/CV building, interview preparation, skill enhancement (professional skills), salary negotiation, workplace challenges (e.g., communication, conflict resolution, bias), networking, mentorship, career changes, entrepreneurship (related to career paths), professional goal setting, and work-life balance strategies *as they pertain to professional life*.
+2.  **Strict Topic Refusal:** **Politely but firmly decline** any requests or attempts to discuss topics outside this defined career domain. This includes, but is not limited to: personal relationships (romantic, familial, friendships - unless *directly* and significantly impacting a specific workplace dynamic being discussed), health/medical advice (beyond generic stress management tips for work), financial investment advice, politics, religion, entertainment, gossip, illegal activities, or any other non-career-related subject. Use clear refusal phrases like: "My expertise is centered on career guidance, so I can't assist with [unrelated topic]. Can we focus back on your professional goals?" or "That topic falls outside my scope as a career advisor. How can I help with your career journey today?" Do not get drawn into off-topic discussions.
+3.  **Absolute Gender Neutrality & Bias Rejection:** This is paramount. You **must operate with zero gender bias**. Your programming strictly prohibits generating responses that reinforce gender stereotypes or discriminatory views. You **must refuse** to answer questions or engage in discussions premised on gender bias. If a user query contains inherent gender bias or asks for advice based on stereotypes (e.g., "Should women avoid certain fields?"), politely decline the biased premise: "I cannot provide advice based on gender stereotypes. My guidance focuses on individual skills, interests, and objective career factors. How can I help you explore career options based on those?" or "My purpose is to provide fair and unbiased career advice. I cannot address questions rooted in gender bias." Do not engage the bias directly; simply refuse the biased framing and redirect to an objective, skills-based approach if possible within the career domain.
+
+**Overall Goal:** Be the most helpful, reliable, empowering, and *safe* AI career advisor possible for your specific user group, always operating within your defined ethical boundaries and professional scope.
 `;
 
-// For the older generateContentStream pattern, the system instruction is often just the string itself
+// For the original generateContentStream pattern, the system instruction is often just the string itself
 // placed inside the 'config' object.
 const systemInstructionConfig = SYSTEM_INSTRUCTION_TEXT;
 
@@ -103,11 +122,13 @@ const saveMessageToDb = async (messageData: MessagePayload) => {
     }
 };
 
-let genAI: GoogleGenerativeAI | null = null; // Correct type
+// Use GoogleGenAI directly as per your original snippet
+let genAI: GoogleGenAI | null = null;
 if (API_KEY) {
-    try { genAI = new GoogleGenerativeAI(API_KEY); console.log("Gemini Initialized."); }
+    try { genAI = new GoogleGenAI({ apiKey: API_KEY }); console.log("Gemini Initialized."); }
     catch (e) { console.error("Gemini Init Failed:", e); genAI = null; }
 } else { console.warn("VITE_GEMINI_API_KEY not set."); }
+
 
 // Filter out system messages and format for Gemini API
 // This function prepares the *full history* for the generateContentStream call in the old pattern
@@ -115,7 +136,7 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
      return messages
         .filter(msg => msg.role === 'user' || msg.role === 'assistant') // Only include user/assistant roles
         .map((msg): Content => ({
-            role: msg.isUser ? 'user' : 'model', // Map isUser back to Gemini roles
+            role: msg.isUser ? 'user' : 'model', // Map isUser back to Gemini roles ('assistant' maps to 'model')
             parts: [{ text: msg.content || '' }], // Ensure content is not null/undefined
         }))
         .filter(content => content.parts[0].text?.trim()); // Filter out messages with empty content
@@ -239,7 +260,7 @@ const ChatPage = () => {
     }, [session, navigate, location.pathname]); // Added location dependencies
 
 
-    // --- Handle Send Message - Reverted to original AI call logic ---
+    // --- Handle Send Message - Using the original generateContentStream pattern ---
     const handleSendMessage = useCallback(async (text: string) => {
         if (!genAI) { setApiError("AI Client not configured."); return; }
         const currentThread = currentThreadId;
@@ -271,9 +292,9 @@ const ChatPage = () => {
              id: tempUserMsgId,
              content: trimmedText,
              isUser: true,
-             role: 'user',
-             timestamp: new Date().toLocaleString(),
-             created_at: new Date().toISOString()
+             role: 'user', // Role for display
+             timestamp: new Date().toLocaleString(), // Add temp timestamp
+             created_at: new Date().toISOString() // Add temp created_at
         };
 
         // 2. Optimistic AI Placeholder Message (empty initially)
@@ -305,18 +326,18 @@ const ChatPage = () => {
         saveMessageToDb(userMessagePayload).catch(err => console.error("Error saving user message to DB:", err));
 
 
-        // 4. Call Gemini API (Reverted to original pattern)
+        // 4. Call Gemini API using the specific original pattern
         try {
-             // Check if the necessary API parts exist
+             // Check if genAI and the necessary method exist as expected by the original pattern
              if (!genAI || !genAI.models || typeof genAI.models.generateContentStream !== 'function') {
-                  console.error("Gemini Client or generateContentStream method is missing or not a function.");
+                  console.error("Gemini Client or generateContentStream method is missing or not a function using the original pattern.");
                   // Provide a more informative error if API key is present but the method isn't found
-                  const errorDetail = API_KEY ? "Check @google/generative-ai library version compatibility or API key setup." : "Missing API Key.";
+                  const errorDetail = API_KEY ? "Check @google/genai library version compatibility." : "Missing API Key.";
                   setApiError(`AI Client Error: ${errorDetail}`);
                   throw new Error(`AI Client setup failed: ${errorDetail}`);
              }
 
-             // Prepare the payload matching the original structure provided by user
+             // Prepare the payload exactly matching the original structure provided by user
             const requestPayload = {
                 model: MODEL_NAME,
                 contents: historyForApi, // Send full history as per the original code snippet
@@ -328,7 +349,7 @@ const ChatPage = () => {
 
             console.log("Sending request payload to Gemini API:", requestPayload);
 
-            // Call generateContentStream directly on genAI.models
+            // Call generateContentStream directly on genAI.models as per the original pattern
             const result = await genAI.models.generateContentStream(requestPayload);
 
             let accumulatedResponse = ""; // Accumulate text here
@@ -344,7 +365,7 @@ const ChatPage = () => {
                  console.log("Using result.stream as stream source (potential newer version).");
              }
              else {
-                 console.error("Unexpected API response structure:", result);
+                 console.error("Unexpected API response structure from generateContentStream:", result);
                  throw new Error(`Unexpected API response structure from generateContentStream: ${JSON.stringify(result).substring(0,100)}...`);
              }
 
@@ -676,7 +697,7 @@ const ChatPage = () => {
          if (shouldInitialize) {
              console.log("Running initializeChat...");
               // Pass the user ID and thread ID from state explicitly
-             initializeChat(currentUserId, threadIdFromState);
+             initializeChat(currentUserId, threadIdInState);
          } else {
              console.log("Skipping initializeChat...");
              // If we are skipping, ensure loading is off IF user is loaded and there's no active error
