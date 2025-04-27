@@ -58,7 +58,7 @@ const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const LINKUP_API_KEY = import.meta.env.VITE_LINKUP_API_KEY; // Get Linkup Key
 const MODEL_NAME = "gemini-2.0-flash"; // Ensure this model supports function calling
 
-// --- System Instruction (Updated) ---
+// --- System Instruction (Corrected) ---
 const SYSTEM_INSTRUCTION_TEXT = `
 **Persona & Role:**
 You are Parthavi, an advanced AI career advisor chatbot. Your core mission is to empower Indian women by providing exceptional, personalized, and culturally sensitive guidance for their professional journeys. You act as a knowledgeable, supportive, and encouraging mentor figure.
@@ -72,7 +72,7 @@ Maintain a delicate balance: be professional and insightful, yet simultaneously 
 3.  **Conciseness:** Respect the user's time. While being thorough, avoid unnecessary verbosity. Use bullet points or numbered lists for clarity when presenting multiple options or steps.
 4.  **Contextual Awareness:** Remember the flow of the current conversation to provide relevant follow-up and avoid repeating information unnecessarily.
 5.  **Cultural Sensitivity (India Focus):** Be mindful of potential cultural nuances relevant to women in the Indian workforce (e.g., navigating family expectations alongside career ambitions, specific industry landscapes, common workplace dynamics) but **critically avoid making generalizations or stereotypes.** Base any culturally relevant points on widely accepted professional knowledge, not assumptions.
-6.  **Tool Usage (Web Search):** If a user's query requires current information beyond your training data (e.g., recent job market trends, specific company details, current salary benchmarks, links to specific online resources, news about an industry), **use the \`linkup_web_search\` tool**. Formulate a concise and effective search query (`q` parameter) based on the user's request to fetch relevant information from the web. After receiving the search results, synthesize the information and present it clearly to the user, citing the source if appropriate based on the search result content. Do not just dump the raw search results.
+6.  **Tool Usage (Web Search):** If a user's query requires current information beyond your training data (e.g., recent job market trends, specific company details, current salary benchmarks, links to specific online resources, news about an industry), **use the 'linkup_web_search' tool**. Formulate a concise and effective search query (the 'q' parameter) based on the user's request to fetch relevant information from the web. After receiving the search results, synthesize the information and present it clearly to the user, citing the source if appropriate based on the search result content. Do not just dump the raw search results.
 
 **Content Domain & Boundaries (Strict Guardrails):**
 1.  **Career Focus ONLY:** Your knowledge and conversation **must remain strictly confined** to career development, job searching, resume/CV building, interview preparation, skill enhancement (professional skills), salary negotiation, workplace challenges (e.g., communication, conflict resolution, bias), networking, mentorship, career changes, entrepreneurship (related to career paths), professional goal setting, and work-life balance strategies *as they pertain to professional life*. This includes using the search tool for these purposes.
@@ -81,6 +81,7 @@ Maintain a delicate balance: be professional and insightful, yet simultaneously 
 
 **Overall Goal:** Be the most helpful, reliable, empowering, and *safe* AI career advisor possible for your specific user group, always operating within your defined ethical boundaries and professional scope, utilizing tools effectively when needed.
 `;
+
 
 const systemInstructionObject: SystemInstruction = { parts: [{ text: SYSTEM_INSTRUCTION_TEXT }] };
 
@@ -169,11 +170,16 @@ if (GEMINI_API_KEY) {
 
 // --- Utility Functions ---
 const saveMessageToDb = async (messageData: MessagePayload): Promise<string | null> => {
-    // ... (keep existing saveMessageToDb function)
     if (!messageData.user_id) { console.error("Save Error: user_id missing."); return null; }
     console.log('Background save initiated for:', messageData.role);
     try {
-        const { data, error } = await supabase.from('messages').insert(messageData).select('id').single();
+        // Add metadata field if it doesn't exist on the object yet
+        const dataToInsert = { ...messageData, metadata: messageData.metadata || null };
+        const { data, error } = await supabase
+            .from('messages')
+            .insert(dataToInsert) // Insert the potentially modified object
+            .select('id')
+            .single();
         if (error) throw error;
         console.log(`Background save SUCCESS for ${messageData.role}, ID: ${data?.id}`);
         return data?.id;
@@ -185,14 +191,14 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
     const history: Content[] = [];
     messages.forEach(msg => {
         // Simple text message (user or previous model response)
-        if (!msg.isToolCall && !msg.toolResultContent && msg.content) {
+        if (!msg.isToolCall && !msg.toolResultContent && msg.content && !msg.isError && !msg.isPending) { // Exclude intermediate/error states
             history.push({
                 role: msg.role as Role, // 'user' or 'model'
                 parts: [{ text: msg.content }],
             });
         }
-        // Model's request to call a function
-        else if (msg.isToolCall && msg.content) { // Assuming content holds the FunctionCall object temporarily
+        // Model's request to call a function (represented by the isToolCall flag and stored call object)
+        else if (msg.isToolCall && msg.content) { // Content holds the *serialized* FunctionCall
              try {
                 const funcCall: FunctionCall = JSON.parse(msg.content); // Deserialize
                 history.push({
@@ -201,8 +207,8 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
                 });
              } catch (e) { console.error("Failed to parse stored FunctionCall:", msg.content, e); }
         }
-        // The result of the function call provided back to the model
-        else if (msg.toolResultContent) {
+        // The result of the function call provided back to the model (represented by toolResultContent)
+        else if (msg.toolResultContent) { // toolResultContent holds the *serialized* FunctionResponse
              try {
                 const funcResponse: FunctionResponse = JSON.parse(msg.toolResultContent); // Deserialize
                 history.push({
@@ -211,9 +217,10 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
                 });
              } catch (e) { console.error("Failed to parse stored FunctionResponse:", msg.toolResultContent, e); }
         }
-        // Ignore messages that don't fit (e.g., empty placeholders before streaming)
+        // Ignore messages that don't fit (e.g., empty placeholders, errors, pending states)
     });
-    return history.filter(content => content.parts && content.parts.length > 0); // Ensure parts exist
+    // Filter out any potentially empty/invalid entries
+    return history.filter(content => content.parts && content.parts.length > 0 && (content.parts[0].text || content.parts[0].functionCall || content.parts[0].functionResponse));
 };
 
 
@@ -240,12 +247,11 @@ const ChatPage = () => {
     const isInitialMount = useRef(true);
 
     const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-        // ... (keep existing scrollToBottom function)
         setTimeout(() => {
             if (chatContainerRef.current) {
                 chatContainerRef.current.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior });
             }
-        }, 60);
+        }, 60); // Slight delay might help ensure layout is complete
     }, []);
 
     const handleCreateNewThread = useCallback(async (shouldSetActive: boolean = true): Promise<string | null> => {
@@ -299,17 +305,20 @@ const ChatPage = () => {
             timestamp: "",
             created_at: new Date().toISOString()
         };
-        const currentMessages = [...messages, optimisticUserMsg]; // History including the new user msg
-        setMessages(currentMessages);
+        // Use a functional update to get the latest messages state
+        setMessages(prevMessages => [...prevMessages, optimisticUserMsg]);
         scrollToBottom('smooth');
 
         // Save user message to DB (fire and forget)
         const userMessagePayload: MessagePayload = { thread_id: currentThread, content: trimmedText, role: 'user', user_id: userId };
         saveMessageToDb(userMessagePayload).catch(err => console.error("Error saving user message:", err));
 
+        // Get the history *after* adding the user message
+        let currentHistory = formatChatHistoryForGemini([...messages, optimisticUserMsg]);
+
         // --- Main Interaction Loop ---
         let loopCount = 0; // Safety break
-        let currentHistory = formatChatHistoryForGemini(currentMessages); // Start with user message added
+        let latestMessages = [...messages, optimisticUserMsg]; // Keep track of messages within the loop
 
         try {
             while (loopCount < 5) { // Max 5 turns (user->model->tool->model->...)
@@ -318,41 +327,66 @@ const ChatPage = () => {
 
                 // 2. Call Gemini API
                 const requestPayload = {
-                    model: MODEL_NAME,
+                    // model: MODEL_NAME, // Using genAI.getGenerativeModel, model passed there
                     contents: currentHistory,
                     tools: [linkupSearchTool], // Pass the tool definition
                     systemInstruction: systemInstructionObject,
-                    config: { responseMimeType: 'text/plain' } // Keep this simple for now
+                    // config: { responseMimeType: 'text/plain' } // Config might not be needed here if using model object directly
                 };
 
-                const result: GenerateContentStreamResult = await genAI.models.generateContentStream(requestPayload);
+                const model = genAI.getGenerativeModel({
+                    model: MODEL_NAME,
+                    // You can add safetySettings, generationConfig here if needed
+                });
+                const result: GenerateContentStreamResult = await model.generateContentStream(requestPayload);
 
                 // 3. Process the Response (Stream or Function Call)
                 let aggregatedResponse: GenerateContentResponse | null = null;
                 let accumulatedText = "";
                 let detectedFunctionCall: FunctionCall | null = null;
 
+                // Add a temporary pending AI message placeholder immediately
+                const tempAiMsgId = `temp-ai-${Date.now()}-turn-${loopCount}`;
+                const pendingAiMsg: DisplayMessage = {
+                    id: tempAiMsgId, content: '', isUser: false, role: 'assistant',
+                    timestamp: "", created_at: new Date().toISOString(), isPending: true
+                };
+                latestMessages = [...latestMessages, pendingAiMsg];
+                setMessages(latestMessages);
+                scrollToBottom('smooth'); // Scroll for the pending message
+
                 // Process stream chunks
                 for await (const chunk of result.stream) {
                     // Aggregate the full response object for function call checks
+                    // Simple aggregation, might need improvement for complex responses
                     if (!aggregatedResponse) aggregatedResponse = { ...chunk };
-                    else { // Naive merge, might need deeper merge for complex scenarios
+                    else {
                         if (chunk.candidates) aggregatedResponse.candidates = chunk.candidates;
                         if (chunk.promptFeedback) aggregatedResponse.promptFeedback = chunk.promptFeedback;
                     }
 
-                    // Check for function call in the candidate (might appear early)
-                    const funcCall = chunk?.candidates?.[0]?.content?.parts?.find(part => part.functionCall)?.functionCall;
-                    if (funcCall) {
-                        detectedFunctionCall = funcCall;
+                    // Extract text and potential function call from the current chunk
+                    const candidate = chunk?.candidates?.[0];
+                    const funcCallPart = candidate?.content?.parts?.find(part => part.functionCall);
+                    const textPart = candidate?.content?.parts?.find(part => part.text);
+
+                    if (funcCallPart?.functionCall) {
+                        detectedFunctionCall = funcCallPart.functionCall;
                         console.log("Function Call DETECTED in stream chunk:", detectedFunctionCall);
+                        // Remove the pending text placeholder, function call is taking over
+                        latestMessages = latestMessages.filter(m => m.id !== tempAiMsgId);
+                        setMessages(latestMessages);
                         break; // Stop processing stream chunks if a function call is found
                     }
 
-                    // Accumulate text if no function call yet
-                    const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (chunkText) {
-                        accumulatedText += chunkText;
+                    if (textPart?.text) {
+                        accumulatedText += textPart.text;
+                        // Update the pending message content *incrementally*
+                        latestMessages = latestMessages.map(m =>
+                            m.id === tempAiMsgId ? { ...m, content: accumulatedText, isPending: true } : m
+                        );
+                        setMessages(latestMessages);
+                        scrollToBottom('smooth'); // Scroll as text streams in
                     }
                 } // End stream processing
 
@@ -361,25 +395,32 @@ const ChatPage = () => {
                 // A. FUNCTION CALL Required
                 if (detectedFunctionCall) {
                     console.log("Processing Function Call:", detectedFunctionCall.name);
-
-                    // Add a placeholder message for the function call itself (optional visual)
+                    // Add a placeholder message for the function call itself
                     const tempToolCallMsgId = `temp-toolcall-${Date.now()}`;
                      const toolCallMsg: DisplayMessage = {
                         id: tempToolCallMsgId,
-                        content: JSON.stringify(detectedFunctionCall), // Store the call object
+                        content: JSON.stringify(detectedFunctionCall), // Store the call object (serialized)
                         isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(),
                         isToolCall: true, isPending: true // Mark as pending tool call
                     };
-                    setMessages(prev => [...prev, toolCallMsg]);
+                     // Update state to show the tool call initiation message
+                    latestMessages = [...latestMessages, toolCallMsg]; // Add tool call message
+                    setMessages(latestMessages);
                     scrollToBottom();
 
                     let toolResult: LinkupSearchResult | { error: string };
+                    let toolResultMessage = ""; // User-facing message about the tool action
+
                     if (detectedFunctionCall.name === 'linkup_web_search') {
-                        // Update placeholder to "Searching..."
-                         setMessages(prev => prev.map(m => m.id === tempToolCallMsgId ? { ...m, isPending: true, content: `Searching the web for: "${detectedFunctionCall.args.q}"...` } : m));
-                        toolResult = await callLinkupSearchAPI(detectedFunctionCall.args.q as string);
+                        const query = detectedFunctionCall.args.q as string || "generic topic";
+                        toolResultMessage = `Searching the web for: "${query}"...`;
+                        // Update the visual state to show searching...
+                         latestMessages = latestMessages.map(m => m.id === tempToolCallMsgId ? { ...m, isPending: true, content: toolResultMessage } : m);
+                         setMessages(latestMessages);
+                        toolResult = await callLinkupSearchAPI(query);
                     } else {
                         console.warn(`Unsupported function call detected: ${detectedFunctionCall.name}`);
+                        toolResultMessage = `Error: Tool '${detectedFunctionCall.name}' is not available.`;
                         toolResult = { error: `Function ${detectedFunctionCall.name} is not implemented.` };
                     }
 
@@ -389,17 +430,22 @@ const ChatPage = () => {
                         response: toolResult // Send back the success data or error object
                     };
 
-                    // Update the placeholder message with the result (optional visual)
-                    setMessages(prev => prev.map(m => m.id === tempToolCallMsgId ? {
+                     // Update the tool call message state to show completion/result summary
+                    const resultSummary = (toolResult as { error: string }).error
+                        ? `Search failed: ${(toolResult as { error: string }).error}`
+                        : `Search results received for "${(detectedFunctionCall.args.q as string || 'topic')}".`;
+
+                    latestMessages = latestMessages.map(m => m.id === tempToolCallMsgId ? {
                          ...m,
                          isPending: false,
-                         content: `Search results received for "${detectedFunctionCall.args.q}".`, // Update text
-                         toolResultContent: JSON.stringify(functionResponsePart) // Store the result sent back
-                    } : m));
+                         content: resultSummary, // Update text to show result status
+                         toolResultContent: JSON.stringify(functionResponsePart) // Store the *serialized* result sent back
+                    } : m);
+                    setMessages(latestMessages);
                     scrollToBottom();
 
 
-                    // Add the function call *request* from the model and the function *response* to history
+                    // Add the function call *request* from the model and the function *response* to history for the *next* Gemini call
                     currentHistory.push({ role: 'model', parts: [{ functionCall: detectedFunctionCall }] });
                     currentHistory.push({ role: 'user', parts: [{ functionResponse: functionResponsePart }] }); // Role 'user' tells Gemini "here's the function result"
 
@@ -407,38 +453,49 @@ const ChatPage = () => {
                     continue;
                 }
 
-                // B. TEXT Response Received
+                // B. TEXT Response Received (and fully accumulated)
                 else if (accumulatedText) {
-                    console.log("Text Response Received.");
-                    const tempAiMsgId = `temp-ai-${Date.now()}`;
-                    const finalAiMsg: DisplayMessage = {
-                        id: tempAiMsgId,
-                        content: accumulatedText, // Use the fully accumulated text
-                        isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString()
-                    };
-                    setMessages(prev => [...prev, finalAiMsg]);
-                    scrollToBottom();
+                     console.log("Final Text Response Received:", accumulatedText);
+                     // Update the final AI message placeholder with the complete text and mark as not pending
+                    latestMessages = latestMessages.map(msg =>
+                        msg.id === tempAiMsgId
+                            ? { ...msg, content: accumulatedText, isPending: false }
+                            : msg
+                    );
+                    setMessages(latestMessages);
+                    scrollToBottom(); // Ensure scrolled to bottom after final text
 
-                    // Save final AI message
+                    // Save final AI message to DB
                     const aiMessagePayload: MessagePayload = { thread_id: currentThread, content: accumulatedText, role: 'assistant', user_id: userId };
                     saveMessageToDb(aiMessagePayload).catch(err => console.error("Error saving final AI message:", err));
 
-                    // Text response means the loop is done
+                    // Text response means the interaction loop for this turn is done
                     break;
                 }
 
-                // C. No Text and No Function Call (Error or Empty Response)
+                // C. No Text and No Function Call (Error or Empty Response from Gemini)
                 else {
-                    console.warn("Gemini responded with neither text nor function call.");
-                     const errMsg = "The AI assistant did not provide a response or tool request.";
-                     setApiError(errMsg);
-                      const tempErrorMsgId = `temp-error-${Date.now()}`;
-                     const errorMsg: DisplayMessage = {
-                        id: tempErrorMsgId, content: errMsg,
-                        isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(),
-                        isError: true
-                     };
-                    setMessages(prev => [...prev, errorMsg]);
+                    const finalResponse = await result.response; // Await final aggregated response if stream was empty/weird
+                    console.warn("Gemini responded with neither text nor function call in stream or final response.", finalResponse);
+                    const errMsg = finalResponse?.promptFeedback?.blockReason?.message || "The AI assistant did not provide a response.";
+                    setApiError(errMsg);
+
+                    // Update or replace the pending message with an error state
+                    latestMessages = latestMessages.map(msg =>
+                         msg.id === tempAiMsgId
+                             ? { ...msg, content: `Error: ${errMsg}`, isPending: false, isError: true }
+                             : msg
+                     );
+                     // If pending message wasn't even added (e.g., immediate function call expected but failed)
+                     if (!latestMessages.find(m => m.id === tempAiMsgId)) {
+                         const errorDisplayMsg: DisplayMessage = {
+                             id: tempAiMsgId, content: `Error: ${errMsg}`,
+                             isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(),
+                             isError: true
+                         };
+                         latestMessages = [...latestMessages, errorDisplayMsg];
+                     }
+                     setMessages(latestMessages);
                     scrollToBottom();
                     break; // Exit loop on empty/error response
                 }
@@ -447,6 +504,12 @@ const ChatPage = () => {
             if (loopCount >= 5) {
                  console.error("Function calling loop reached maximum iterations.");
                  setApiError("The conversation flow became too complex. Please try rephrasing.");
+                 // Add error message to UI
+                 const loopErrorMsg: DisplayMessage = {
+                    id: `loop-error-${Date.now()}`, content: "Error: Conversation complexity limit reached.",
+                    isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString(), isError: true
+                 };
+                 setMessages(prev => [...prev, loopErrorMsg]);
             }
 
         } catch (aiError: any) {
@@ -461,7 +524,7 @@ const ChatPage = () => {
                 isError: true
             };
             // Add error message to display
-            setMessages(prev => [...prev, errorDisplayMsg]);
+            setMessages(prev => [...prev.filter(m => !m.isPending), errorDisplayMsg]); // Remove pending, add error
             scrollToBottom();
         } finally {
             setIsResponding(false); // Stop loading indicator
@@ -501,8 +564,8 @@ const ChatPage = () => {
         if (!currentThreadId) {
             handleCreateNewThread(false).then((newId) => {
                 if (newId) {
-                    // Need to ensure threadId is set before sending
-                    setTimeout(() => handleSendMessage(prompt), 0);
+                    // Ensure state update for currentThreadId happens before sending
+                    requestAnimationFrame(() => handleSendMessage(prompt));
                 }
             });
         } else {
@@ -519,82 +582,89 @@ const ChatPage = () => {
     // Initial Load / Thread Change Effect
      useEffect(() => {
         const currentUserId = session?.user?.id;
-        if (!currentUserId || userLoading) { setChatLoading(false); return; }
+        if (!currentUserId || userLoading) {
+            setChatLoading(false); // Stop loading if no user
+            return;
+        }
         const threadIdFromState = location.state?.threadId;
-        console.log("Load Effect: User=", currentUserId, "Loading=", userLoading, "State Thread=", threadIdFromState);
+        console.log("Load Effect Triggered: User=", !!currentUserId, "UserLoading=", userLoading, "State Thread=", threadIdFromState, "Current Thread=", currentThreadId);
+
+        // Prevent reloading same thread or running on initial render before state is set
+        if (threadIdFromState === currentThreadId && !isInitialMount.current) {
+            console.log("Load Effect: Thread ID unchanged, skipping reload.");
+            setChatLoading(false); // Ensure loading is off
+            return;
+        }
 
         const initializeChat = async () => {
-             setChatLoading(true); setMessages([]); setApiError(null);
-             setCreateThreadError(null); setPlaceholderType(null);
-             isInitialMount.current = true; // Mark as initial load
+            setChatLoading(true); setMessages([]); setApiError(null);
+            setCreateThreadError(null); setPlaceholderType(null);
+            console.log("Load Effect: Initializing Chat...");
 
-            if (threadIdFromState && threadIdFromState !== currentThreadId) { // Only reload if ID changed
-                 console.log("Load Effect: Loading thread from state:", threadIdFromState);
-                 setCurrentThreadId(threadIdFromState); // Set the new ID
-                 try {
-                     const { data: existingMessages, error: messagesError } = await supabase
-                         .from('messages')
-                         .select('*')
-                         .eq('thread_id', threadIdFromState)
-                         .order('created_at', { ascending: true });
+
+            if (threadIdFromState) {
+                console.log("Load Effect: Loading thread from state:", threadIdFromState);
+                setCurrentThreadId(threadIdFromState); // Set the new ID *before* fetching
+                try {
+                    const { data: existingMessages, error: messagesError } = await supabase
+                        .from('messages')
+                        .select('*, metadata') // Select metadata if you store tool info there
+                        .eq('thread_id', threadIdFromState)
+                        .order('created_at', { ascending: true });
 
                     if (messagesError) throw messagesError;
 
-                    // Map DB messages to DisplayMessages (handle potential missing content)
-                     const formatted = existingMessages.map(msg => ({
-                         id: msg.id,
-                         content: msg.content ?? '', // Default to empty string if null
-                         isUser: msg.role === 'user',
-                         role: msg.role as 'user' | 'assistant',
-                         timestamp: "", // You might want to format msg.created_at here
-                         created_at: msg.created_at,
-                         // Add logic here if you stored tool call/response info in DB
-                         isToolCall: msg.metadata?.isToolCall ?? false,
-                         toolResultContent: msg.metadata?.toolResultContent ?? null,
-                     }));
+                    // Map DB messages to DisplayMessages (handle potential missing content/metadata)
+                    const formatted = existingMessages.map(msg => ({
+                        id: msg.id,
+                        content: msg.content ?? '', // Default to empty string if null
+                        isUser: msg.role === 'user',
+                        role: msg.role as 'user' | 'assistant',
+                        timestamp: "", // Format msg.created_at here if needed
+                        created_at: msg.created_at,
+                        // Safely access metadata
+                        isToolCall: (msg.metadata as any)?.isToolCall ?? false,
+                        toolResultContent: (msg.metadata as any)?.toolResultContent ?? null,
+                        isPending: false, // Loaded messages are not pending
+                        isError: (msg.metadata as any)?.isError ?? false,
+                    }));
 
                     setMessages(formatted);
                     setPlaceholderType(formatted.length === 0 ? 'new_thread' : null);
                     console.log("Load Effect: Messages loaded, count=", formatted.length);
                     setChatLoading(false);
-                     // Use requestAnimationFrame for smoother scroll after render
-                     requestAnimationFrame(() => {
-                         scrollToBottom('auto'); // Use 'auto' for initial load
-                         isInitialMount.current = false; // Mark initial load finished
-                     });
-                 } catch (error: any) {
+                    // Use requestAnimationFrame for smoother scroll after render
+                    requestAnimationFrame(() => {
+                        scrollToBottom('auto'); // Use 'auto' for initial load
+                    });
+                } catch (error: any) {
                     console.error("Load Effect: Error loading messages:", error);
                     setMessages([]); // Clear messages on error
                     setCurrentThreadId(null); // Reset thread ID
                     setCreateThreadError(`Failed to load chat: ${error.message}`);
                     setChatLoading(false);
                     setPlaceholderType(null);
-                     isInitialMount.current = false;
-                 }
-             } else if (!threadIdFromState) {
-                 console.log("Load Effect: No thread in state, creating new one.");
-                 await handleCreateNewThread(false); // This sets chatLoading=false inside
-                 isInitialMount.current = false;
-             } else {
-                 // Thread ID hasn't changed, don't reload, just ensure loading is false
-                 setChatLoading(false);
-                 if (messages.length > 0) {
-                     requestAnimationFrame(() => scrollToBottom('auto')); // Scroll if already loaded
-                 }
-                  isInitialMount.current = false;
-             }
-         };
-         initializeChat();
-     // eslint-disable-next-line react-hooks/exhaustive-deps
-     }, [session?.user?.id, userLoading, location.state?.threadId]); // Rerun when user or threadId in state changes
+                }
+            } else {
+                console.log("Load Effect: No thread in state, creating new one.");
+                // handleCreateNewThread sets chatLoading=false and updates state inside
+                await handleCreateNewThread(false);
+            }
+            isInitialMount.current = false; // Mark initial setup finished
+        };
+        initializeChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [session?.user?.id, userLoading, location.state?.threadId]); // Rerun when user or threadId in state changes
 
 
     // Scroll on new message (excluding initial mount)
     useEffect(() => {
-        if (!isInitialMount.current && messages.length > 0) {
-            scrollToBottom('smooth');
+        // Only scroll smoothly if it's not the initial load/reload
+        if (!isInitialMount.current && !chatLoading && messages.length > 0) {
+             scrollToBottom('smooth');
         }
-    }, [messages, scrollToBottom]); // Depend only on messages
+    }, [messages, chatLoading, scrollToBottom]); // Depend on messages and chatLoading state
+
 
     useEffect(() => {
         if (isMobile && isMobileSidebarOpen) document.addEventListener('mousedown', handleClickOutside);
@@ -604,7 +674,7 @@ const ChatPage = () => {
 
 
     // --- Render Logic (Adjusted Message Display) ---
-    if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background">Loading User...</div>;
+    if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background text-primary">Loading User...</div>;
 
     const isLoading = chatLoading; // Only consider initial thread loading here
     const showAnyPlaceholder = !isLoading && messages.length === 0 && !createThreadError && !apiError && (placeholderType !== null);
@@ -620,70 +690,81 @@ const ChatPage = () => {
         <div className="flex h-screen bg-background text-secondary overflow-hidden">
             {/* Sidebar (keep existing) */}
             <AnimatePresence>{isMobile && isMobileSidebarOpen && ( <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={closeMobileSidebar} aria-hidden="true"/> )}</AnimatePresence>
-             <motion.div ref={sidebarRef} className={clsx( "absolute md:relative h-full flex-shrink-0 z-40 bg-background border-r border-gray-200/80", "transition-transform duration-300 ease-in-out", isMobile ? (isMobileSidebarOpen ? SIDEBAR_WIDTH_MOBILE_OPEN : 'w-16') : (isDesktopSidebarExpanded ? SIDEBAR_WIDTH_DESKTOP : SIDEBAR_ICON_WIDTH_DESKTOP), isMobile && (isMobileSidebarOpen ? 'translate-x-0 shadow-lg' : '-translate-x-full') )}>
+             <motion.div ref={sidebarRef} className={clsx( "absolute md:relative h-full flex-shrink-0 z-40 bg-background border-r border-border", "transition-transform duration-300 ease-in-out", isMobile ? (isMobileSidebarOpen ? SIDEBAR_WIDTH_MOBILE_OPEN : 'w-16') : (isDesktopSidebarExpanded ? SIDEBAR_WIDTH_DESKTOP : SIDEBAR_ICON_WIDTH_DESKTOP), isMobile && (isMobileSidebarOpen ? 'translate-x-0 shadow-lg' : '-translate-x-full') )}>
                   <Sidebar isExpanded={!isMobile && isDesktopSidebarExpanded} isMobileOpen={isMobile && isMobileSidebarOpen} activePanel={activePanel} onPanelChange={handlePanelChange} openSharePopup={openSharePopup} onCloseMobileSidebar={closeMobileSidebar} onSelectThread={handleSelectThread} onNewThread={handleCreateNewThread} currentThreadId={currentThreadId} />
              </motion.div>
 
             {/* Main Chat Area */}
             <main className="flex-1 flex flex-col h-full overflow-hidden relative">
                 {/* Mobile Header (keep existing) */}
-                {isMobile && ( <div className="flex items-center px-4 py-2 border-b border-gray-200/60 flex-shrink-0 h-14"> <button onClick={isMobileSidebarOpen ? closeMobileSidebar : openMobileSidebar} className="p-2 text-gray-600 hover:text-primary" aria-label={isMobileSidebarOpen ? "Close menu" : "Open menu"}> {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />} </button> <h1 className="flex-grow text-center text-base font-semibold text-secondary truncate px-2">Parthavi</h1> <div className="w-8 h-8"></div> </div> )}
+                {isMobile && ( <div className="flex items-center px-4 py-2 border-b border-border flex-shrink-0 h-14"> <button onClick={isMobileSidebarOpen ? closeMobileSidebar : openMobileSidebar} className="p-2 text-muted-foreground hover:text-primary" aria-label={isMobileSidebarOpen ? "Close menu" : "Open menu"}> {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />} </button> <h1 className="flex-grow text-center text-base font-semibold text-foreground truncate px-2">Parthavi</h1> <div className="w-8 h-8"></div> </div> )}
 
                 {/* Message List */}
                 <div ref={chatContainerRef} className={clsx('flex-1 overflow-y-auto scroll-smooth min-h-0', 'px-4 md:px-10 lg:px-16 xl:px-20 pt-4 pb-4')} >
                     <div className={clsx("max-w-4xl mx-auto w-full flex flex-col min-h-full", showMessagesList ? 'justify-end' : 'justify-center items-center')} >
-                        {isLoading && <div className="flex justify-center items-center p-10 text-gray-500 flex-1"> <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading Chat... </div>}
+                        {isLoading && <div className="flex justify-center items-center p-10 text-muted-foreground flex-1"> <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading Chat... </div>}
                         {showAnyPlaceholder && placeholderType === 'initial' && <div className="flex-1 flex items-center justify-center w-full"><InitialPlaceholder onPromptClick={handlePromptClick} /></div>}
                         {showAnyPlaceholder && placeholderType === 'new_thread' && <div className="flex-1 flex items-center justify-center w-full"><NewThreadPlaceholder onPromptClick={handlePromptClick} /></div>}
-                        {showAnyError && <div className="flex-1 flex items-center justify-center w-full"><div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'><AlertCircle className="w-8 h-8 mb-3 text-red-400" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div></div>}
+                        {showAnyError && <div className="flex-1 flex items-center justify-center w-full"><div className='flex flex-col items-center text-center text-red-600 p-4 bg-red-100 rounded-lg max-w-md border border-red-300'><AlertCircle className="w-8 h-8 mb-3 text-red-500" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div></div>}
 
                         {/* Render Actual Messages */}
                         {showMessagesList && (
                             <div className="w-full space-y-4 md:space-y-5">
                                 {messages.map((m) => {
-                                    // Render normal user/AI messages
-                                    if (!m.isToolCall && !m.isError) {
+                                    // Render normal user/AI messages (not pending, not errors, not tool calls)
+                                    if (!m.isPending && !m.isError && !m.isToolCall) {
                                         return <ChatMessage key={m.id} message={m.content} isUser={m.isUser} senderName={m.isUser ? (userName || 'You') : 'Parthavi'} />;
+                                    }
+                                    // Render pending AI text message (streaming in)
+                                    else if (m.isPending && !m.isToolCall && !m.isError) {
+                                        return <ChatMessage key={m.id} message={m.content || "..."} isUser={false} senderName={'Parthavi'} isPending={true} />;
                                     }
                                     // Optionally render tool call / result steps for debugging or clarity
                                      else if (m.isToolCall) {
+                                         // Attempt to parse the query from the stored JSON for display
+                                         let displayQuery = "search topic";
+                                         try {
+                                             const callData = JSON.parse(m.content || '{}');
+                                             displayQuery = callData?.args?.q || displayQuery;
+                                         } catch {}
+                                         const messageText = m.isPending ? `Searching the web for: "${displayQuery}"...` : `Search results received for "${displayQuery}".`;
+
                                          return (
-                                             <div key={m.id} className="text-xs text-gray-500 italic text-center py-2 my-1 flex items-center justify-center gap-2">
-                                                 <Search size={12}/> {m.isPending ? m.content : `Called tool: linkup_web_search`}
+                                             <div key={m.id} className="text-xs text-muted-foreground italic text-center py-2 my-1 flex items-center justify-center gap-2">
+                                                 <Search size={12}/> {messageText}
                                                  {m.isPending && <Loader2 size={12} className="animate-spin"/>}
                                              </div>
                                          );
                                      }
-                                     // Render API errors inline (already handled by showAnyError block, but keep for safety)
+                                     // Render inline errors distinctly
                                      else if (m.isError) {
-                                         return <div key={m.id} className="text-sm text-red-600 text-center py-2">{m.content}</div>
+                                         return <div key={m.id} className="text-sm text-destructive text-center py-2 px-4 bg-destructive/10 rounded my-2 mx-auto max-w-md">{m.content}</div>
                                      }
-                                     return null; // Should not happen
+                                     return null; // Should not happen if logic is correct
                                 })}
-                                 {/* Show typing indicator only when actively waiting for Gemini (not during tool call) */}
-                                {isResponding && messages[messages.length - 1]?.role === 'user' && (
-                                    <div className="flex justify-start pl-10 pr-4"> {/* Adjust padding to align with AI messages */}
-                                        <div className="flex items-center space-x-2 text-gray-500">
-                                             <div className="typing-indicator"> {/* You'd need CSS for the dots */}
-                                                <span></span><span></span><span></span>
-                                             </div>
-                                             <span className="text-sm">Parthavi is thinking...</span>
-                                        </div>
-                                    </div>
-                                )}
+                                {/* General "Responding" indicator (distinct from pending message) */}
+                                {/* Only show if isResponding is true AND the last message isn't already a pending AI message */}
+                                {/* {isResponding && !messages[messages.length - 1]?.isPending && messages[messages.length - 1]?.role !== 'assistant' && (
+                                     <div className="flex justify-start pl-10 pr-4">
+                                         <div className="flex items-center space-x-2 text-muted-foreground">
+                                             <Loader2 className="w-4 h-4 animate-spin" />
+                                             <span className="text-sm">Thinking...</span>
+                                         </div>
+                                     </div>
+                                 )} */}
                             </div>
                         )}
                     </div>
                 </div>
 
                  {/* Chat Input Area */}
-                <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
+                <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-border flex-shrink-0">
                     <div className="max-w-4xl mx-auto">
                         <ChatInput
                             value={inputMessage}
                             onChange={handleInputChange}
                             onSendMessage={handleSendMessage}
-                            isResponding={isResponding || chatLoading || aiDisabled} // Disable input if AI key missing
+                            isResponding={isResponding || chatLoading || aiDisabled} // Disable input if AI key missing or busy
                          />
                         {/* Show API Key warning */}
                         {(aiDisabled || searchDisabled) && (
