@@ -1,9 +1,9 @@
-// src/components/chat/NewThreadPlaceholder.tsx
+// src/components/chat/NewThreadPlaceholder.tsx // <--- FILE RENAMED
 import React from 'react';
 import { motion } from 'framer-motion';
-import { MessageSquare, Sparkles } from 'lucide-react'; // Replaced icon
+import { MessageSquare } from 'lucide-react'; // Removed unused icon
 
-interface NewThreadPlaceholderProps {
+interface NewThreadPlaceholderProps { // <--- PROP INTERFACE RENAMED
     onPromptClick: (prompt: string) => void;
 }
 
@@ -15,6 +15,7 @@ const examplePrompts = [
     "Explain work-life balance strategies.",
 ];
 
+// --- COMPONENT RENAMED ---
 const NewThreadPlaceholder: React.FC<NewThreadPlaceholderProps> = ({ onPromptClick }) => {
     const containerVariants = {
         hidden: { opacity: 0, scale: 0.95 },
@@ -37,17 +38,17 @@ const NewThreadPlaceholder: React.FC<NewThreadPlaceholderProps> = ({ onPromptCli
             variants={containerVariants}
             initial="hidden"
             animate="visible"
-            // Added max-width
+            // Ensure it takes full height available to center correctly
             className="flex flex-col items-center justify-center text-center h-full py-10 px-4 max-w-lg mx-auto"
         >
             {/* Icon */}
-            <div className="w-14 h-14 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-5 shadow-sm"> {/* Smaller Icon */}
+            <div className="w-14 h-14 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-5 shadow-sm">
                 <MessageSquare className="w-7 h-7 text-primary opacity-90" />
             </div>
 
             {/* Title */}
-            <h2 className="text-xl md:text-2xl font-serif text-secondary mb-3"> {/* Reduced margin */}
-                Ready for your brilliance!
+            <h2 className="text-xl md:text-2xl font-serif text-secondary mb-3">
+                 Ready for your brilliance! {/* Changed from "Welcome back!" or similar */}
             </h2>
 
             {/* Subtitle */}
@@ -67,7 +68,7 @@ const NewThreadPlaceholder: React.FC<NewThreadPlaceholderProps> = ({ onPromptCli
                         whileHover={{ scale: 1.03, backgroundColor: 'rgba(141, 70, 114, 0.1)' }}
                         whileTap={{ scale: 0.98 }}
                         onClick={() => onPromptClick(prompt)}
-                         className="bg-background border border-gray-300/60 text-secondary text-xs sm:text-sm px-3 py-1.5 rounded-full transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-primary/50" // Added focus ring
+                         className="bg-background border border-gray-300/60 text-secondary text-xs sm:text-sm px-3 py-1.5 rounded-full transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-primary/50"
                     >
                         {prompt}
                     </motion.button>
@@ -77,4 +78,4 @@ const NewThreadPlaceholder: React.FC<NewThreadPlaceholderProps> = ({ onPromptCli
     );
 };
 
-export default NewThreadPlaceholder;
+export default NewThreadPlaceholder; // <--- EXPORT RENAMED
