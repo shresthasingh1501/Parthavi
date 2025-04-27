@@ -5,12 +5,14 @@ import { motion } from 'framer-motion';
 import PageTransition from '../components/PageTransition';
 import { MessageSquare } from 'lucide-react';
 import { useUser } from '../context/UserContext';
+// Note: Provider type import removed as it's not used in this version's handleSignIn
 
 const SignInPage = () => {
+  // Destructure only needed values from useUser based on this version
   const { session, signInWithOAuth, loading } = useUser();
   const navigate = useNavigate(); // Keep for potential link navigation
 
-  // Update the type for the provider parameter
+  // Use the simple type annotation for the provider parameter
   const handleSignIn = async (provider: 'google' | 'linkedin_oidc') => {
     await signInWithOAuth(provider);
   };
@@ -22,6 +24,7 @@ const SignInPage = () => {
 
   // If session exists, UserProvider is handling navigation, render nothing here
   if (session) {
+    // Log removed as per reference code
     return null;
   }
 
@@ -61,11 +64,13 @@ const SignInPage = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
               onClick={() => handleSignIn('google')} // Google provider name is correct
+              // Removed disabled={loading}
               className="w-full flex items-center justify-center gap-3 bg-white text-gray-700 px-6 py-3 rounded-full shadow-md hover:shadow-lg transition-all duration-200"
             >
+              {/* Reverted Google Icon */}
               <img
                 src="https://www.google.com/favicon.ico"
-                alt="Google"
+                alt="Google" // Reverted alt text
                 className="w-5 h-5"
                 referrerPolicy="no-referrer"
               />
@@ -79,11 +84,13 @@ const SignInPage = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.3 }}
               onClick={() => handleSignIn('linkedin_oidc')} // *** USE 'linkedin_oidc' ***
+               // Removed disabled={loading}
               className="w-full flex items-center justify-center gap-3 bg-[#0A66C2] text-white px-6 py-3 rounded-full shadow-md hover:shadow-lg transition-all duration-200"
             >
+              {/* Reverted LinkedIn Icon */}
               <img
                 src="https://www.linkedin.com/favicon.ico"
-                alt="LinkedIn"
+                alt="LinkedIn" // Reverted alt text
                 className="w-5 h-5"
                  referrerPolicy="no-referrer"
               />
