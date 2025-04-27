@@ -1,381 +1,108 @@
-// src/pages/ChatPage.tsx
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-// --- Corrected Framer Motion Import ---
-import { AnimatePresence, motion } from 'framer-motion';
-// --- End Corrected Import ---
-import { clsx } from 'clsx';
-import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle } from 'lucide-react';
-import { useMediaQuery } from 'react-responsive';
-import { GoogleGenAI, Content, Part, Role, GenerateContentResponse } from "@google/genai";
+// src/components/chat/InitialPlaceholder.tsx
+import React from 'react';
+import { motion } from 'framer-motion';
+import { MessageSquare, ArrowUp, Sparkles, Plus, Send } from 'lucide-react'; // Added Send
 
-import ChatInput from '../components/chat/ChatInput';
-import ChatMessage from '../components/chat/ChatMessage';
-import Sidebar from '../components/chat/Sidebar';
-import SharePopup from '../components/SharePopup';
-import { useUser } from '../context/UserContext';
-import { supabase } from '../lib/supabaseClient';
-import { Database } from '../types/supabase';
-import { generateRandomTitle } from '../utils';
-import InitialPlaceholder from '../components/chat/InitialPlaceholder';
-import NewThreadPlaceholder from '../components/chat/NewThreadPlaceholder';
+interface InitialPlaceholderProps {
+    onPromptClick: (prompt: string) => void;
+}
 
-// ... (rest of the code remains exactly the same as the previous correct version) ...
+const examplePrompts = [
+    "Help me identify my strengths.",
+    "How can I ask for a promotion?",
+    "Suggest negotiation techniques.",
+    "Explore careers in Tech for women.",
+    "How to build confidence at work?",
+];
 
-export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
-type DbMessage = Database['public']['Tables']['messages']['Row'];
-type DisplayMessage = Pick<DbMessage, 'id' | 'role' | 'created_at' | 'content'> & { isUser: boolean; timestamp: string };
-type MessagePayload = Omit<DbMessage, 'id' | 'created_at' | 'updated_at'>;
-type PlaceholderType = 'initial' | 'new_thread' | null;
-
-// --- Constants ---
-const SIDEBAR_WIDTH_DESKTOP = 'w-[448px]';
-const SIDEBAR_ICON_WIDTH_DESKTOP = 'md:w-24';
-const SIDEBAR_WIDTH_MOBILE_OPEN = 'w-[85vw] max-w-sm'; // <-- Mobile width constraint
-
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const MODEL_NAME = "gemini-2.0-flash";
-
-// --- Helpers (Keep as is) ---
-const saveMessageToDb = async (messageData: MessagePayload) => {
-    if (!messageData.user_id) { console.error("Save Error: user_id missing."); return null; }
-    console.log('Background save initiated for:', messageData.role);
-    try {
-        const { data, error } = await supabase.from('messages').insert(messageData).select('id').single();
-        if (error) throw error;
-        console.log(`Background save SUCCESS for ${messageData.role}, ID: ${data?.id}`);
-        return data?.id;
-    } catch (error) { console.error(`Background save FAILED for ${messageData.role}:`, error); return null; }
-};
-
-let genAI: GoogleGenAI | null = null;
-if (API_KEY) {
-    try { genAI = new GoogleGenAI({ apiKey: API_KEY }); console.log("Gemini Initialized."); }
-    catch (e) { console.error("Gemini Init Failed:", e); genAI = null; }
-} else { console.warn("VITE_GEMINI_API_KEY not set."); }
-
-const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
-    return messages.map((msg): Content => ({
-        role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }],
-    })).filter(content => content.parts[0].text?.trim());
-};
-// --- End Helpers ---
-
-const ChatPage = () => {
-    const { session, user, loading: userLoading } = useUser();
-    const navigate = useNavigate();
-    const location = useLocation(); // Get location object
-
-    // --- State ---
-    // Initialize thread ID *only* if passed via state, otherwise null (forces creation)
-    const [currentThreadId, setCurrentThreadId] = useState<string | null>(location.state?.threadId || null);
-    const [messages, setMessages] = useState<DisplayMessage[]>([]);
-    const [inputMessage, setInputMessage] = useState('');
-    const [isResponding, setIsResponding] = useState(false);
-    const [chatLoading, setChatLoading] = useState(true); // Start true until thread is loaded/created
-    const [apiError, setApiError] = useState<string | null>(null);
-    const [createThreadError, setCreateThreadError] = useState<string | null>(null);
-    const [placeholderType, setPlaceholderType] = useState<PlaceholderType>(null); // Adjusted initial state
-    // Sidebar State
-    const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
-    const [isDesktopSidebarExpanded, setIsDesktopSidebarExpanded] = useState(true);
-    const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-    const [activePanel, setActivePanel] = useState<ActivePanelType>('discover');
-    const [isSharePopupOpen, setIsSharePopupOpen] = useState(false);
-
-    // Refs
-    const chatContainerRef = useRef<HTMLDivElement>(null);
-    const sidebarRef = useRef<HTMLDivElement>(null);
-    const isInitialMount = useRef(true); // To prevent scroll on initial load
-
-    // --- Callbacks ---
-    const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-        setTimeout(() => {
-            if (chatContainerRef.current) {
-                chatContainerRef.current.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior });
-            }
-        }, 50);
-    }, []);
-
-    const handleCreateNewThread = useCallback(async (shouldSetActive: boolean = true): Promise<string | null> => {
-        if (!session?.user) { setCreateThreadError("User session not found."); return null; }
-        console.log("Attempting to create new thread...");
-        setChatLoading(true); setMessages([]); setCurrentThreadId(null);
-        setPlaceholderType(null); setCreateThreadError(null); setApiError(null);
-        try {
-            const newTitle = generateRandomTitle();
-            const { data: newThread, error } = await supabase.from('threads').insert({ user_id: session.user.id, title: newTitle }).select('id').single();
-            if (error) throw error;
-            if (!newThread) throw new Error("New thread data missing after insert.");
-            console.log("New thread created:", newThread.id);
-            setCurrentThreadId(newThread.id); // Set the ID first
-            setPlaceholderType('new_thread'); // Show placeholder for the new empty thread
-
-            // Update URL state *after* setting thread ID
-            navigate(location.pathname, { replace: true, state: { threadId: newThread.id } });
-
-            if (shouldSetActive) {
-                 setActivePanel('discover');
-                 // No need to call sidebar functions here, state change handles it
-            }
-            setChatLoading(false); // Set loading false after setup
-            return newThread.id;
-        } catch (error: any) {
-            console.error("Error creating new thread:", error);
-            setCreateThreadError(error.message || "Failed to create new thread.");
-            setChatLoading(false); setCurrentThreadId(null); setPlaceholderType(null);
-            return null;
+const InitialPlaceholder: React.FC<InitialPlaceholderProps> = ({ onPromptClick }) => {
+    const containerVariants = {
+        hidden: { opacity: 0, scale: 0.95 },
+        visible: {
+            opacity: 1, scale: 1,
+            transition: { delay: 0.1, duration: 0.5, ease: "easeOut" }
         }
-    }, [session, navigate, location.pathname]); // Removed sidebar functions
+    };
 
-    // --- Main Send Message Logic ---
-    const handleSendMessage = useCallback(async (text: string) => {
-        if (!genAI) { setApiError("AI Client not configured."); return; }
-        const currentThread = currentThreadId; // Use state variable
-        if (!currentThread || isResponding || !session?.user) return;
-        const trimmedText = text.trim(); if (!trimmedText) return;
+    const itemVariants = {
+        hidden: { opacity: 0, y: 10 },
+        visible: { opacity: 1, y: 0 }
+    };
 
-        if (placeholderType) setPlaceholderType(null);
-        setCreateThreadError(null); setApiError(null);
-        const userId = session.user.id;
-        setIsResponding(true); setInputMessage('');
-
-        const tempUserMsgId = `temp-user-${Date.now()}`;
-        const optimisticUserMsg: DisplayMessage = { id: tempUserMsgId, content: trimmedText, isUser: true, role: 'user', timestamp: "", created_at: new Date().toISOString() };
-        const historyForApi = formatChatHistoryForGemini([...messages, optimisticUserMsg]);
-        setMessages(prev => [...prev, optimisticUserMsg]);
-        scrollToBottom('smooth');
-
-        const userMessagePayload: MessagePayload = { thread_id: currentThread, content: trimmedText, role: 'user', user_id: userId };
-        saveMessageToDb(userMessagePayload).catch(err => console.error("Error saving user message:", err));
-
-        const tempAiMsgId = `temp-ai-${Date.now()}`;
-        const optimisticAiMsg: DisplayMessage = { id: tempAiMsgId, content: '', isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString() };
-        setMessages(prev => [...prev, optimisticAiMsg]);
-        scrollToBottom('smooth');
-
-        try {
-            const requestPayload = { model: MODEL_NAME, contents: historyForApi, config: { responseMimeType: 'text/plain' } };
-            if (!genAI) throw new Error("Gemini AI Client lost.");
-            const result = await genAI.models.generateContentStream(requestPayload);
-
-            let accumulatedResponse = "";
-            let streamSource: AsyncIterable<GenerateContentResponse> | null = null;
-
-            if (result && typeof result[Symbol.asyncIterator] === 'function') streamSource = result;
-            else if (result && result.stream && typeof result.stream[Symbol.asyncIterator] === 'function') streamSource = result.stream;
-            else throw new Error(`Unexpected API response structure: ${JSON.stringify(result).substring(0,100)}...`);
-
-            if (streamSource) {
-                for await (const chunk of streamSource) {
-                    const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (chunkText) {
-                        accumulatedResponse += chunkText;
-                        setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: accumulatedResponse } : msg));
-                    }
-                }
-            }
-            scrollToBottom('smooth');
-
-            if (accumulatedResponse) {
-                const aiMessagePayload: MessagePayload = { thread_id: currentThread, content: accumulatedResponse, role: 'assistant', user_id: userId };
-                saveMessageToDb(aiMessagePayload).catch(err => console.error("Error saving AI message:", err));
-            } else {
-                console.warn("AI generated empty response.");
-                setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: "[No text content received]" } : msg));
-            }
-        } catch (aiError: any) {
-            console.error("Gemini API call error:", aiError);
-            const errorMessage = aiError.message || "An unknown API error occurred.";
-            setApiError(errorMessage);
-            setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: `Error: ${errorMessage}` } : msg));
-            scrollToBottom('smooth');
-        } finally { setIsResponding(false); }
-    }, [currentThreadId, isResponding, session, messages, placeholderType, scrollToBottom]);
-
-    // --- Effects ---
-    useEffect(() => { if (!userLoading && !session) navigate('/', { replace: true }); }, [session, userLoading, navigate]);
-
-    useEffect(() => {
-        const currentUserId = session?.user?.id;
-        if (!currentUserId || userLoading) { setChatLoading(false); return; }
-
-        const threadIdFromState = location.state?.threadId;
-
-        const initializeChat = async () => {
-             setChatLoading(true); setMessages([]); setApiError(null);
-             setCreateThreadError(null); setPlaceholderType(null);
-
-            if (threadIdFromState) {
-                // Case 1: Load specific thread
-                console.log("Effect: Loading thread from state:", threadIdFromState);
-                setCurrentThreadId(threadIdFromState); // Set current thread ID state
-
-                 try {
-                    const { data: existingMessages, error: messagesError } = await supabase.from('messages').select('*').eq('thread_id', threadIdFromState).order('created_at', { ascending: true });
-                    if (messagesError) throw messagesError;
-                    const formatted = existingMessages.map(msg => ({ id: msg.id, content: msg.content ?? '', isUser: msg.role === 'user', role: msg.role as 'user' | 'assistant', timestamp: "", created_at: msg.created_at }));
-                    setMessages(formatted);
-                    setPlaceholderType(formatted.length === 0 ? 'new_thread' : null);
-                    isInitialMount.current = false; // Allow scroll after initial load
-                    setChatLoading(false);
-                    scrollToBottom('auto');
-                } catch (error: any) {
-                    console.error("Effect: Error loading messages:", error);
-                    setMessages([]); setCreateThreadError(`Failed to load chat: ${error.message}`); setChatLoading(false);
-                }
-            } else {
-                // Case 2: No thread ID - Create New Thread
-                console.log("Effect: No thread in state, creating new one.");
-                await handleCreateNewThread(false); // Let this function handle loading state
-            }
-        };
-        initializeChat();
-    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]); // Ensure handleCreateNewThread is stable
-
-    useEffect(() => { if (!isInitialMount.current) scrollToBottom('smooth'); }, [messages, scrollToBottom]);
-
-    // --- Sidebar Handlers (Simplified) ---
-    const closeMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
-    const openMobileSidebar = useCallback(() => { if (!activePanel) setActivePanel('discover'); setIsMobileSidebarOpen(true); }, [activePanel]);
-    const collapseDesktopSidebar = useCallback(() => setIsDesktopSidebarExpanded(false), []);
-    const expandDesktopSidebar = useCallback((panel: ActivePanelType) => { setActivePanel(panel || 'discover'); setIsDesktopSidebarExpanded(true); }, []);
-    const handlePanelChange = useCallback((panel: ActivePanelType) => {
-        if (isMobile) {
-            if (isMobileSidebarOpen && activePanel === panel) closeMobileSidebar();
-            else { setActivePanel(panel); setIsMobileSidebarOpen(true); }
-        } else {
-            if (isDesktopSidebarExpanded && activePanel === panel) collapseDesktopSidebar();
-            else expandDesktopSidebar(panel);
-        }
-    }, [isMobile, activePanel, isMobileSidebarOpen, isDesktopSidebarExpanded, closeMobileSidebar, collapseDesktopSidebar, expandDesktopSidebar]); // Added dependencies
-
-    const handleClickOutside = useCallback((event: MouseEvent) => {
-        if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
-            if (isMobile && isMobileSidebarOpen) closeMobileSidebar();
-        }
-    }, [isMobile, isMobileSidebarOpen, closeMobileSidebar]); // Removed desktop logic
-
-    useEffect(() => {
-        if (isMobile && isMobileSidebarOpen) document.addEventListener('mousedown', handleClickOutside);
-        else document.removeEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
-
-    const handleSelectThread = useCallback((threadId: string) => {
-        if (threadId !== currentThreadId) {
-            console.log("Selecting thread:", threadId);
-            navigate(location.pathname, { replace: true, state: { threadId: threadId } });
-             if (isMobile) closeMobileSidebar(); // Close after selecting
-        } else {
-             if (isMobile) closeMobileSidebar(); // Close even if clicking current
-        }
-    }, [currentThreadId, isMobile, closeMobileSidebar, navigate, location.pathname]);
-
-     const handlePromptClick = useCallback((prompt: string) => {
-        if (!currentThreadId) {
-            handleCreateNewThread(false).then((newId) => {
-                if (newId) setInputMessage(prompt);
-            });
-        } else { setInputMessage(prompt); }
-    }, [currentThreadId, handleCreateNewThread]);
-
-    const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
-    const openSharePopup = () => setIsSharePopupOpen(true);
-
-    // --- Render ---
-    if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background">Loading User...</div>;
-
-    const showPlaceholder = !chatLoading && messages.length === 0 && !createThreadError && !apiError && (placeholderType !== null);
-    const showError = !chatLoading && (!!createThreadError || !!apiError);
-    const errorText = apiError || createThreadError || "";
+     const promptVariants = {
+        hidden: { opacity: 0, y: 5 },
+        visible: (i: number) => ({
+            opacity: 1, y: 0,
+            transition: { delay: 0.4 + i * 0.07, duration: 0.4 } // Stagger delay
+        }),
+    };
 
     return (
-        <div className="flex h-screen bg-background text-secondary overflow-hidden">
-             {/* Sidebar Overlay for Mobile */}
-             {/* Use AnimatePresence FROM FRAMER MOTION HERE */}
-             <AnimatePresence>
-                 {isMobile && isMobileSidebarOpen && (
-                     <motion.div
-                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                         transition={{ duration: 0.2 }}
-                         className="fixed inset-0 bg-black/30 z-30 md:hidden"
-                         onClick={closeMobileSidebar}
-                         aria-hidden="true"
-                     />
-                 )}
-             </AnimatePresence>
+        <motion.div
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+            className="flex flex-col items-center justify-center text-center h-full py-10 px-4 max-w-lg mx-auto" // Constrain width
+        >
+            {/* Logo/Icon */}
+            <motion.div
+                variants={itemVariants} transition={{ delay: 0.2, duration: 0.4 }}
+                className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm" // Added subtle shadow
+            >
+                <Sparkles className="w-8 h-8 text-primary opacity-90" /> {/* Changed Icon */}
+            </motion.div>
 
-             {/* Sidebar Container */}
-             <motion.div
-                 ref={sidebarRef}
-                 className={clsx(
-                     "absolute md:relative h-full flex-shrink-0 z-40 bg-background border-r border-gray-200/80",
-                     "transition-transform duration-300 ease-in-out", // Ensure transition class is present
-                     // Width Logic
-                     isMobile
-                         ? (isMobileSidebarOpen ? SIDEBAR_WIDTH_MOBILE_OPEN : 'w-16') // Mobile: specific open width or icon width
-                         : (isDesktopSidebarExpanded ? SIDEBAR_WIDTH_DESKTOP : SIDEBAR_ICON_WIDTH_DESKTOP), // Desktop: expanded or icons
-                     // Mobile Visibility Logic
-                     isMobile && (isMobileSidebarOpen ? 'translate-x-0 shadow-lg' : '-translate-x-full') // Slide in/out on mobile
-                 )}
-             >
-                  <Sidebar
-                      isExpanded={!isMobile && isDesktopSidebarExpanded}
-                      isMobileOpen={isMobile && isMobileSidebarOpen}
-                      activePanel={activePanel}
-                      onPanelChange={handlePanelChange}
-                      openSharePopup={openSharePopup}
-                      onCloseMobileSidebar={closeMobileSidebar}
-                      onSelectThread={handleSelectThread}
-                      onNewThread={handleCreateNewThread}
-                      currentThreadId={currentThreadId}
-                  />
-             </motion.div>
+            {/* Welcome Title */}
+            <motion.h2
+                 variants={itemVariants} transition={{ delay: 0.3, duration: 0.4 }}
+                className="text-2xl md:text-3xl font-serif text-secondary mb-3"
+            >
+                Unlock Your Career Potential
+            </motion.h2>
 
-            {/* Main Chat Area */}
-            <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-                {/* --- Mobile Header - Corrected Layout --- */}
-                {isMobile && (
-                    <div className="flex items-center px-4 py-2 border-b border-gray-200/60 flex-shrink-0 h-14"> {/* Fixed height */}
-                        <button
-                            onClick={isMobileSidebarOpen ? closeMobileSidebar : openMobileSidebar}
-                            className="p-2 text-gray-600 hover:text-primary"
-                            aria-label={isMobileSidebarOpen ? "Close menu" : "Open menu"}
-                        >
-                            {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />}
-                        </button>
-                        <h1 className="flex-grow text-center text-base font-semibold text-secondary truncate px-2">
-                            Parthavi
-                        </h1>
-                        <div className="w-8 h-8"></div> {/* Placeholder */}
-                    </div>
-                 )}
-                 {/* --- End Mobile Header --- */}
+            {/* Description */}
+            <motion.p
+                 variants={itemVariants} transition={{ delay: 0.4, duration: 0.4 }}
+                className="text-secondary/80 mb-8 text-sm md:text-base leading-relaxed"
+            >
+                Hi, I'm Parthavi, your AI guide for navigating the professional world.
+                Ask me anything, explore topics, or try a suggestion below!
+            </motion.p>
 
-                {/* Messages Container */}
-                 <div ref={chatContainerRef} className={clsx('flex-1 overflow-y-auto scroll-smooth min-h-0', 'px-4 md:px-10 lg:px-20 pt-4 pb-4')}>
-                    <div className={clsx("max-w-3xl mx-auto w-full h-full flex flex-col", showPlaceholder || showError ? 'justify-center items-center' : 'justify-end')}>
-                        {chatLoading && <div className="flex justify-center items-center p-10 text-gray-500"> <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading... </div>}
-                        {!chatLoading && !showError && placeholderType === 'initial' && <InitialPlaceholder onPromptClick={handlePromptClick} />}
-                        {!chatLoading && !showError && placeholderType === 'new_thread' && <NewThreadPlaceholder onPromptClick={handlePromptClick} />}
-                        {!chatLoading && showError && <div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'><AlertCircle className="w-8 h-8 mb-3 text-red-400" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div>}
-                        {!chatLoading && !showPlaceholder && !showError && <div className="w-full">{messages.map((m) => <ChatMessage key={m.id} message={m.content} isUser={m.isUser} />)}</div>}
-                    </div>
-                </div>
+             {/* Interaction Guidance - Simplified */}
+            <motion.div
+                 variants={itemVariants} transition={{ delay: 0.5, duration: 0.4 }}
+                className="text-xs text-secondary/60 space-y-2 mb-10"
+            >
+                <p className="flex items-center justify-center gap-1.5">
+                    <Send size={14} /> Type your question below or tap a suggestion to start.
+                </p>
+                 <p className="flex items-center justify-center gap-1.5">
+                    <Sparkles size={14} /> Use <span className='font-medium'>Discover</span> in the sidebar for more ideas.
+                </p>
+            </motion.div>
 
-                {/* Input Area */}
-                <div className="px-4 md:px-10 lg:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
-                    <div className="max-w-3xl mx-auto">
-                        <ChatInput value={inputMessage} onChange={handleInputChange} onSendMessage={handleSendMessage} isResponding={isResponding || chatLoading || (!genAI && !API_KEY)} />
-                         {!genAI && !API_KEY && ( <p className="text-xs text-red-500 mt-2 text-center px-4"> AI functionality is disabled. Missing API Key. </p> )}
-                    </div>
-                </div>
-            </main>
 
-            <SharePopup isOpen={isSharePopupOpen} onClose={() => setIsSharePopupOpen(false)} />
-        </div>
+            {/* Example Prompts */}
+            <div className="flex flex-wrap justify-center gap-2 max-w-xl mx-auto">
+                {examplePrompts.map((prompt, index) => (
+                    <motion.button
+                        key={prompt}
+                        custom={index}
+                        variants={promptVariants}
+                        initial="hidden"
+                        animate="visible"
+                        whileHover={{ scale: 1.03, backgroundColor: 'rgba(141, 70, 114, 0.1)' }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => onPromptClick(prompt)}
+                        className="bg-background border border-gray-300/60 text-secondary text-xs sm:text-sm px-3 py-1.5 rounded-full transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-primary/50" // Added focus ring
+                    >
+                        {prompt}
+                    </motion.button>
+                ))}
+            </div>
+        </motion.div>
     );
 };
 
-export default ChatPage;
+export default InitialPlaceholder;
