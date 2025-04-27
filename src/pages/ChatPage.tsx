@@ -5,9 +5,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle, Sparkles, User } from 'lucide-react'; // Added icons needed for collapsed sidebar
 import { useMediaQuery } from 'react-responsive';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai"; // Standard package name
 // Import types needed for the original generateContentStream response structure
-import { GenerateContentResponse, Content, Part } from "@google/generative-ai"; // Import types
+import { GenerateContentResponse, Content, Part } from "@google/generative-ai"; // Import types from the standard package
+
 
 import ChatInput from '../components/chat/ChatInput';
 import ChatMessage from '../components/chat/ChatMessage';
@@ -310,7 +311,7 @@ const ChatPage = () => {
              if (!genAI || !genAI.models || typeof genAI.models.generateContentStream !== 'function') {
                   console.error("Gemini Client or generateContentStream method is missing or not a function.");
                   // Provide a more informative error if API key is present but the method isn't found
-                  const errorDetail = API_KEY ? "Check @google/generative-ai library version compatibility." : "Missing API Key.";
+                  const errorDetail = API_KEY ? "Check @google/generative-ai library version compatibility or API key setup." : "Missing API Key.";
                   setApiError(`AI Client Error: ${errorDetail}`);
                   throw new Error(`AI Client setup failed: ${errorDetail}`);
              }
@@ -675,7 +676,7 @@ const ChatPage = () => {
          if (shouldInitialize) {
              console.log("Running initializeChat...");
               // Pass the user ID and thread ID from state explicitly
-             initializeChat(currentUserId, threadIdInState);
+             initializeChat(currentUserId, threadIdFromState);
          } else {
              console.log("Skipping initializeChat...");
              // If we are skipping, ensure loading is off IF user is loaded and there's no active error
@@ -1018,7 +1019,7 @@ const ChatPage = () => {
                     </div>
                 </div>
             </main>
-            <SharePopup isOpen={isSharePopupOpen} onClose={() => setIsSharePopup(false)} /> {/* Fixed typo */}
+            <SharePopup isOpen={isSharePopupOpen} onClose={() => setIsSharePopupOpen(false)} />
         </div>
     );
 };
