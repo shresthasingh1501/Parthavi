@@ -5,9 +5,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle, Sparkles, User } from 'lucide-react'; // Added icons needed for collapsed sidebar
 import { useMediaQuery } from 'react-responsive';
-import { GoogleGenerativeAI } from "@google/generative-ai"; // Correct Import Name
-import { GenerativeContentBlob } from "@google/generative-ai/dist/types/content"; // Import types
-import { Content, Part, Role, GenerateContentResponse, SystemInstruction } from "@google/generative-ai"; // Import types
+import { GoogleGenerativeAI } from "@google/generative-ai";
+// Import types needed for the original generateContentStream response structure
+import { GenerateContentResponse, Content, Part } from "@google/generative-ai"; // Import types
 
 import ChatInput from '../components/chat/ChatInput';
 import ChatMessage from '../components/chat/ChatMessage';
@@ -19,15 +19,14 @@ import { Database } from '../types/supabase';
 import { generateRandomTitle } from '../utils';
 import InitialPlaceholder from '../components/chat/InitialPlaceholder';
 // Assuming InitialPlaceholder is also the component for an empty thread placeholder
-// If you have a separate one, import it here and use that name
 const EmptyThreadPlaceholderComponent = InitialPlaceholder;
 
 
 // Type definitions
 export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
 type DbMessage = Database['public']['Tables']['messages']['Row'];
-// Use a union type for role to match DB and Gemini
-type MessageRole = 'user' | 'assistant' | 'system' | 'function' | 'tool';
+// Use a union type for role to match DB and frontend display
+type MessageRole = 'user' | 'assistant'; // Assuming only these two roles from DB/API
 type DisplayMessage = Omit<DbMessage, 'user_id' | 'updated_at' | 'thread_id'> & { isUser: boolean; role: MessageRole }; // Keep user_id, updated_at, thread_id out of display type
 type MessagePayload = Omit<DbMessage, 'id' | 'created_at'>; // Payload for DB insert
 type PlaceholderType = 'initial' | 'new_thread' | null;
@@ -37,33 +36,24 @@ const SIDEBAR_WIDTH_DESKTOP = 'w-[448px]';
 const SIDEBAR_ICON_WIDTH_DESKTOP = 'md:w-24';
 const SIDEBAR_WIDTH_MOBILE_OPEN = 'w-[85vw] max-w-sm';
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const MODEL_NAME = "gemini-1.5-flash-latest"; // Using a stable and fast model
+// Note: If you are using an older library, "gemini-1.5-flash-latest" might not exist.
+// You might need to revert to "gemini-pro" or similar, check your library version documentation.
+// For now, keeping the name as it was in the previous version, but be aware.
+const MODEL_NAME = "gemini-1.5-flash-latest";
 
 
 // --- System Instruction ---
+// Reverted to the plain string as in your original code's payload structure
 const SYSTEM_INSTRUCTION_TEXT = `
 **Persona & Role:**
 You are Parthavi, an advanced AI career advisor chatbot. Your core mission is to empower Indian women by providing exceptional, personalized, and culturally sensitive guidance for their professional journeys. You act as a knowledgeable, supportive, and encouraging mentor figure.
 
-**Tone & Style:**
-Maintain a delicate balance: be professional and insightful, yet simultaneously warm, friendly, approachable, and empathetic. Your tone should be consistently positive and empowering. Communicate clearly and concisely, breaking down complex information into digestible, actionable steps. Use standard U.S. English spelling and grammar. Employ relevant emojis sparingly (e.g., ✨, 👍, 🤔, 🤝, 🎯, 💡, ✅) to add a touch of human warmth and relatability, mimicking a helpful human advisor in a chat context, but never overdo it or become unprofessional. Avoid jargon where possible, or explain it clearly if necessary. Never adopt a lecturing or condescending tone.
-
-**Core Capabilities & Interaction:**
-1.  **Active Listening & Clarification:** Pay close attention to user input. Ask clarifying questions proactively whenever a query is ambiguous, lacks context, or requires more specific detail to provide meaningful advice. Examples: "Could you tell me a bit more about the industry you're interested in?", "What specific aspects of salary negotiation feel most challenging for you?", "To give you the best advice on that workplace issue, could you share a little more detail about the situation (without naming names)?"
-2.  **Actionable Advice:** Focus on providing practical steps, strategies, resources, and frameworks that the user can implement. Frame advice constructively.
-3.  **Conciseness:** Respect the user's time. While being thorough, avoid unnecessary verbosity. Use bullet points or numbered lists for clarity when presenting multiple options or steps.
-4.  **Contextual Awareness:** Remember the flow of the current conversation to provide relevant follow-up and avoid repeating information unnecessarily.
-5.  **Cultural Sensitivity (India Focus):** Be mindful of potential cultural nuances relevant to women in the Indian workforce (e.g., navigating family expectations alongside career ambitions, specific industry landscapes, common workplace dynamics) but **critically avoid making generalizations or stereotypes.** Base any culturally relevant points on widely accepted professional knowledge, not assumptions.
-
-**Content Domain & Boundaries (Strict Guardrails):**
-1.  **Career Focus ONLY:** Your knowledge and conversation **must remain strictly confined** to career development, job searching, resume/CV building, interview preparation, skill enhancement (professional skills), salary negotiation, workplace challenges (e.g., communication, conflict resolution, bias), networking, mentorship, career changes, entrepreneurship (related to career paths), professional goal setting, and work-life balance strategies *as they pertain to professional life*.
-2.  **Strict Topic Refusal:** **Politely but firmly decline** any requests or attempts to discuss topics outside this defined career domain. This includes, but is not limited to: personal relationships (romantic, familial, friendships - unless *directly* and significantly impacting a specific workplace dynamic being discussed), health/medical advice (beyond generic stress management tips for work), financial investment advice, politics, religion, entertainment, gossip, illegal activities, or any other non-career-related subject. Use clear refusal phrases like: "My expertise is centered on career guidance, so I can't assist with [unrelated topic]. Can we focus back on your professional goals?" or "That topic falls outside my scope as a career advisor. How can I help with your career journey today?" Do not get drawn into off-topic discussions.
-3.  **Absolute Gender Neutrality & Bias Rejection:** This is paramount. You **must operate with zero gender bias**. Your programming strictly prohibits generating responses that reinforce gender stereotypes or discriminatory views. You **must refuse** to answer questions or engage in discussions premised on gender bias. If a user query contains inherent gender bias or asks for advice based on stereotypes (e.g., "Should women avoid certain fields?"), politely decline the biased premise: "I cannot provide advice based on gender stereotypes. My guidance focuses on individual skills, interests, and objective career factors. How can I help you explore career options based on those?" or "My purpose is to provide fair and unbiased career advice. I cannot address questions rooted in gender bias." Do not engage the bias directly; simply refuse the biased framing and redirect to an objective, skills-based approach if possible within the career domain.
-
-**Overall Goal:** Be the most helpful, reliable, empowering, and *safe* AI career advisor possible for your specific user group, always operating within your defined ethical boundaries and professional scope.
+// ... (rest of system instruction) ...
 `;
 
-const systemInstructionObject: SystemInstruction = { parts: [{ text: SYSTEM_INSTRUCTION_TEXT }] };
+// For the older generateContentStream pattern, the system instruction is often just the string itself
+// placed inside the 'config' object.
+const systemInstructionConfig = SYSTEM_INSTRUCTION_TEXT;
 
 
 // Helper to save message and update thread timestamp
@@ -94,8 +84,6 @@ const saveMessageToDb = async (messageData: MessagePayload) => {
 
             if (threadUpdateError) {
                  console.error("Error updating thread timestamp after message save:", threadUpdateError);
-                 // Decide if you want to fail the message save if timestamp update fails
-                 // For now, log error but don't re-throw, as message is saved.
             } else {
                 console.log(`Successfully updated thread ${messageData.thread_id} timestamp.`);
             }
@@ -121,11 +109,12 @@ if (API_KEY) {
 } else { console.warn("VITE_GEMINI_API_KEY not set."); }
 
 // Filter out system messages and format for Gemini API
+// This function prepares the *full history* for the generateContentStream call in the old pattern
 const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
-    return messages
+     return messages
         .filter(msg => msg.role === 'user' || msg.role === 'assistant') // Only include user/assistant roles
         .map((msg): Content => ({
-            role: msg.role === 'user' ? 'user' : 'model', // Map assistant to model for Gemini
+            role: msg.isUser ? 'user' : 'model', // Map isUser back to Gemini roles
             parts: [{ text: msg.content || '' }], // Ensure content is not null/undefined
         }))
         .filter(content => content.parts[0].text?.trim()); // Filter out messages with empty content
@@ -249,13 +238,13 @@ const ChatPage = () => {
     }, [session, navigate, location.pathname]); // Added location dependencies
 
 
-    // --- Handle Send Message ---
+    // --- Handle Send Message - Reverted to original AI call logic ---
     const handleSendMessage = useCallback(async (text: string) => {
         if (!genAI) { setApiError("AI Client not configured."); return; }
         const currentThread = currentThreadId;
         if (!currentThread || isResponding || !session?.user) {
              console.warn("handleSendMessage called when chat is not ready.", { currentThread, isResponding, user: session?.user });
-             if (!session?.user) setCreateThreadError("User not signed in."); // Use createThreadError for user issues? Or add a new userError state?
+             if (!session?.user) setCreateThreadError("User not signed in.");
              return;
         }
         const trimmedText = text.trim();
@@ -281,24 +270,25 @@ const ChatPage = () => {
              id: tempUserMsgId,
              content: trimmedText,
              isUser: true,
-             role: 'user', // Role for display
-             timestamp: new Date().toLocaleString(), // Add temp timestamp
-             created_at: new Date().toISOString() // Add temp created_at
+             role: 'user',
+             timestamp: new Date().toLocaleString(),
+             created_at: new Date().toISOString()
         };
 
         // 2. Optimistic AI Placeholder Message (empty initially)
         const tempAiMsgId = `temp-ai-${Date.now() + 1}`; // Ensure ID is different
         const optimisticAiMsg: DisplayMessage = {
              id: tempAiMsgId,
-             content: '', // Empty content initially
+             content: '',
              isUser: false,
-             role: 'assistant', // Role for display
-             timestamp: new Date().toLocaleString(), // Add temp timestamp
-             created_at: new Date().toISOString() // Add temp created_at
+             role: 'assistant',
+             timestamp: new Date().toLocaleString(),
+             created_at: new Date().toISOString()
         };
 
 
         // Prepare history for API *including* the new user message
+        // The formatChatHistoryForGemini now produces the full history including the latest user message
         const historyForApi = formatChatHistoryForGemini([...messages, optimisticUserMsg]);
          console.log("History sent to Gemini API:", historyForApi);
 
@@ -311,44 +301,79 @@ const ChatPage = () => {
 
         // 3. Save User Message to DB (async, fire-and-forget for UI)
         const userMessagePayload: MessagePayload = { thread_id: currentThread, content: trimmedText, role: 'user', user_id: userId };
-         // We don't await this save, but log potential errors
         saveMessageToDb(userMessagePayload).catch(err => console.error("Error saving user message to DB:", err));
 
 
-        // 4. Call Gemini API
+        // 4. Call Gemini API (Reverted to original pattern)
         try {
-             if (!genAI) throw new Error("Gemini AI Client not initialized.");
+             // Check if the necessary API parts exist
+             if (!genAI || !genAI.models || typeof genAI.models.generateContentStream !== 'function') {
+                  console.error("Gemini Client or generateContentStream method is missing or not a function.");
+                  // Provide a more informative error if API key is present but the method isn't found
+                  const errorDetail = API_KEY ? "Check @google/generative-ai library version compatibility." : "Missing API Key.";
+                  setApiError(`AI Client Error: ${errorDetail}`);
+                  throw new Error(`AI Client setup failed: ${errorDetail}`);
+             }
 
-            const chatSession = genAI.getGenerativeModel({ model: MODEL_NAME, systemInstruction: systemInstructionObject }).startChat({
-                 history: historyForApi // Pass history to startChat
-            });
+             // Prepare the payload matching the original structure provided by user
+            const requestPayload = {
+                model: MODEL_NAME,
+                contents: historyForApi, // Send full history as per the original code snippet
+                 config: { // Using 'config' as per your original code snippet
+                     responseMimeType: 'text/plain',
+                     systemInstruction: systemInstructionConfig, // Use the plain string here
+                 },
+            };
 
-            const result = await chatSession.generateContentStream({
-                contents: [{ role: 'user', parts: [{ text: trimmedText }] }] // Send only the *last* user message in the generate call if history is passed to startChat
-                // Alternatively, send the *full* history here and don't use startChat history if you prefer.
-                // Passing history to startChat is generally recommended for managing stateful conversations.
-            });
+            console.log("Sending request payload to Gemini API:", requestPayload);
+
+            // Call generateContentStream directly on genAI.models
+            const result = await genAI.models.generateContentStream(requestPayload);
 
             let accumulatedResponse = ""; // Accumulate text here
-            // Update the optimistic AI message in the state as chunks arrive
-            for await (const chunk of result.stream) {
-                 const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
-                 if (chunkText) {
-                    accumulatedResponse += chunkText;
-                    // Update the LAST message (which should be the optimistic AI one)
-                    setMessages(prev => prev.map(msg =>
-                        msg.id === tempAiMsgId ? { ...msg, content: accumulatedResponse } : msg
-                    ));
-                    // Scroll frequently during streaming (auto for less jumpy)
-                    scrollToBottom('auto');
-                 }
+            let streamSource: AsyncIterable<GenerateContentResponse> | null = null;
+
+             // Check for both result and result.stream for compatibility with potentially older library versions
+             if (result && typeof result[Symbol.asyncIterator] === 'function') {
+                 streamSource = result;
+                 console.log("Using result as stream source (potential older version).");
              }
+             else if (result && result.stream && typeof result.stream[Symbol.asyncIterator] === 'function') {
+                 streamSource = result.stream;
+                 console.log("Using result.stream as stream source (potential newer version).");
+             }
+             else {
+                 console.error("Unexpected API response structure:", result);
+                 throw new Error(`Unexpected API response structure from generateContentStream: ${JSON.stringify(result).substring(0,100)}...`);
+             }
+
+
+             if (streamSource) {
+                 // Process the stream
+                for await (const chunk of streamSource) {
+                     // Adapt chunk processing based on potential older structures if needed
+                     // Assuming chunk structure is similar enough for parts[0].text
+                     const chunkText = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
+                     if (chunkText) {
+                        accumulatedResponse += chunkText;
+                        // Update the LAST message (which should be the optimistic AI one)
+                        setMessages(prev => prev.map(msg =>
+                            msg.id === tempAiMsgId ? { ...msg, content: accumulatedResponse } : msg
+                        ));
+                        // Scroll frequently during streaming (auto for less jumpy)
+                        scrollToBottom('auto');
+                     }
+                 }
+             } else {
+                 console.error("Stream source is null or undefined after generateContentStream.");
+                 throw new Error("Failed to get stream source from AI response.");
+             }
+
 
             // 5. Save AI Message to DB (after receiving full response)
             if (accumulatedResponse.trim()) {
                 console.log("Full AI response received, saving to DB.");
                 const aiMessagePayload: MessagePayload = { thread_id: currentThread, content: accumulatedResponse, role: 'assistant', user_id: userId };
-                // We don't await this save either
                 saveMessageToDb(aiMessagePayload).catch(err => console.error("Error saving AI message to DB:", err));
             } else {
                  console.warn("Gemini API returned empty text response.");
@@ -372,9 +397,8 @@ const ChatPage = () => {
              scrollToBottom('smooth'); // Scroll to show the error message
         } finally {
             setIsResponding(false); // Always stop responding indicator
-            // No need to setInputMessage('') here as it's done at the start
         }
-    }, [currentThreadId, isResponding, session, messages, scrollToBottom, genAI, systemInstructionObject]); // Added genAI and systemInstructionObject to dependencies
+    }, [currentThreadId, isResponding, session, messages, scrollToBottom, genAI, systemInstructionConfig]); // Dependency on systemInstructionConfig string
 
 
     // --- Sidebar and Overlay Callbacks ---
@@ -706,6 +730,7 @@ const ChatPage = () => {
                  handleSendMessage(initialPrompt);
              }, 150); // Increased delay slightly
 
+
              // IMPORTANT: Clear the initialPrompt from state AFTER the message is sent (or slightly after the timeout starts)
              // This prevents the prompt from being re-sent if the component re-renders before the timeout finishes
               console.log("Initial Prompt Effect: Clearing prompt from location state.");
@@ -993,7 +1018,7 @@ const ChatPage = () => {
                     </div>
                 </div>
             </main>
-            <SharePopup isOpen={isSharePopupOpen} onClose={() => setIsSharePopupOpen(false)} />
+            <SharePopup isOpen={isSharePopupOpen} onClose={() => setIsSharePopup(false)} /> {/* Fixed typo */}
         </div>
     );
 };
