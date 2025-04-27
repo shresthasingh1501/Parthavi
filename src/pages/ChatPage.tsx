@@ -8,10 +8,10 @@ import { useMediaQuery } from 'react-responsive';
 import { GoogleGenAI, Content, Part, Role, GenerateContentResponse, SystemInstruction } from "@google/genai";
 
 import ChatInput from '../components/chat/ChatInput';
-import ChatMessage from '../components/chat/ChatMessage';
+import ChatMessage from '../components/chat/ChatMessage'; // Ensure import
 import Sidebar from '../components/chat/Sidebar';
 import SharePopup from '../components/SharePopup';
-import { useUser } from '../context/UserContext';
+import { useUser } from '../context/UserContext'; // Ensure useUser is imported
 import { supabase } from '../lib/supabaseClient';
 import { Database } from '../types/supabase';
 import { generateRandomTitle } from '../utils';
@@ -89,7 +89,8 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
 // --- Component ---
 const ChatPage = () => {
     // --- Hooks ---
-    const { session, user, loading: userLoading } = useUser();
+    // --- GET userName from context ---
+    const { session, user, userName, loading: userLoading } = useUser();
     const navigate = useNavigate();
     const location = useLocation();
     const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
@@ -172,19 +173,14 @@ const ChatPage = () => {
         setMessages(prev => [...prev, optimisticAiMsg]);
 
         try {
-            // --- CORRECTED: systemInstruction inside config ---
             const requestPayload = {
                 model: MODEL_NAME,
                 contents: historyForApi,
                 config: {
                     responseMimeType: 'text/plain',
-                    systemInstruction: systemInstructionObject, // <-- System instruction NESTED HERE
-                    // Add other generation configs here if needed
-                    // temperature: 0.9,
+                    systemInstruction: systemInstructionObject,
                 },
-                 // safetySettings: [] // Optional safety settings if needed
             };
-            // --- End Correction ---
 
             if (!genAI) throw new Error("Gemini AI Client lost.");
             const result = await genAI.models.generateContentStream(requestPayload);
@@ -254,13 +250,13 @@ const ChatPage = () => {
         if (!currentThreadId) {
             handleCreateNewThread(false).then((newId) => {
                 if (newId) {
-                    handleSendMessage(prompt); // Send message after thread creation
+                    handleSendMessage(prompt);
                 }
             });
         } else {
-            handleSendMessage(prompt); // Send message immediately
+            handleSendMessage(prompt);
         }
-    }, [currentThreadId, handleCreateNewThread, handleSendMessage]); // Added handleSendMessage
+    }, [currentThreadId, handleCreateNewThread, handleSendMessage]);
     const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
     const openSharePopup = () => setIsSharePopupOpen(true);
 
@@ -306,7 +302,7 @@ const ChatPage = () => {
             }
         };
         initializeChat();
-    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]);
+    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]); // Added handleCreateNewThread dep
 
     useEffect(() => {
         if (!isInitialMount.current && messages.length > 0) {
@@ -319,6 +315,7 @@ const ChatPage = () => {
         else document.removeEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
+
 
     // --- Render Logic ---
     if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background">Loading User...</div>;
@@ -346,7 +343,17 @@ const ChatPage = () => {
                         {showAnyPlaceholder && placeholderType === 'initial' && <div className="flex-1 flex items-center justify-center w-full"><InitialPlaceholder onPromptClick={handlePromptClick} /></div>}
                         {showAnyPlaceholder && placeholderType === 'new_thread' && <div className="flex-1 flex items-center justify-center w-full"><NewThreadPlaceholder onPromptClick={handlePromptClick} /></div>}
                         {showAnyError && <div className="flex-1 flex items-center justify-center w-full"><div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'><AlertCircle className="w-8 h-8 mb-3 text-red-400" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div></div>}
-                        {showMessagesList && <div className="w-full space-y-2 md:space-y-3">{messages.map((m) => <ChatMessage key={m.id} message={m.content} isUser={m.isUser} />)}</div>}
+                        {/* --- Pass senderName to ChatMessage --- */}
+                        {showMessagesList && <div className="w-full space-y-4 md:space-y-5"> {/* Increased spacing slightly for names */}
+                            {messages.map((m) => (
+                                <ChatMessage
+                                    key={m.id}
+                                    message={m.content}
+                                    isUser={m.isUser}
+                                    senderName={m.isUser ? (userName || 'You') : 'Parthavi'} // Pass name here
+                                />
+                            ))}
+                        </div>}
                     </div>
                 </div>
                 <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
