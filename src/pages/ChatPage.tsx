@@ -1,7 +1,9 @@
 // src/pages/ChatPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+// --- Corrected Framer Motion Import ---
 import { AnimatePresence, motion } from 'framer-motion';
+// --- End Corrected Import ---
 import { clsx } from 'clsx';
 import { MessageSquare, Menu as MenuIcon, X, Loader2, AlertCircle } from 'lucide-react';
 import { useMediaQuery } from 'react-responsive';
@@ -18,6 +20,7 @@ import { generateRandomTitle } from '../utils';
 import InitialPlaceholder from '../components/chat/InitialPlaceholder';
 import NewThreadPlaceholder from '../components/chat/NewThreadPlaceholder';
 
+// ... (rest of the code remains exactly the same as the previous correct version) ...
 
 export type ActivePanelType = 'discover' | 'threads' | 'profile' | null;
 type DbMessage = Database['public']['Tables']['messages']['Row'];
@@ -61,17 +64,19 @@ const formatChatHistoryForGemini = (messages: DisplayMessage[]): Content[] => {
 const ChatPage = () => {
     const { session, user, loading: userLoading } = useUser();
     const navigate = useNavigate();
-    const location = useLocation();
+    const location = useLocation(); // Get location object
 
     // --- State ---
+    // Initialize thread ID *only* if passed via state, otherwise null (forces creation)
     const [currentThreadId, setCurrentThreadId] = useState<string | null>(location.state?.threadId || null);
     const [messages, setMessages] = useState<DisplayMessage[]>([]);
     const [inputMessage, setInputMessage] = useState('');
     const [isResponding, setIsResponding] = useState(false);
-    const [chatLoading, setChatLoading] = useState(true);
+    const [chatLoading, setChatLoading] = useState(true); // Start true until thread is loaded/created
     const [apiError, setApiError] = useState<string | null>(null);
     const [createThreadError, setCreateThreadError] = useState<string | null>(null);
-    const [placeholderType, setPlaceholderType] = useState<PlaceholderType>(null);
+    const [placeholderType, setPlaceholderType] = useState<PlaceholderType>(null); // Adjusted initial state
+    // Sidebar State
     const isMobile = useMediaQuery({ query: '(max-width: 768px)' });
     const [isDesktopSidebarExpanded, setIsDesktopSidebarExpanded] = useState(true);
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -81,7 +86,7 @@ const ChatPage = () => {
     // Refs
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const sidebarRef = useRef<HTMLDivElement>(null);
-    const isInitialMount = useRef(true);
+    const isInitialMount = useRef(true); // To prevent scroll on initial load
 
     // --- Callbacks ---
     const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -126,7 +131,7 @@ const ChatPage = () => {
     // --- Main Send Message Logic ---
     const handleSendMessage = useCallback(async (text: string) => {
         if (!genAI) { setApiError("AI Client not configured."); return; }
-        const currentThread = currentThreadId;
+        const currentThread = currentThreadId; // Use state variable
         if (!currentThread || isResponding || !session?.user) return;
         const trimmedText = text.trim(); if (!trimmedText) return;
 
@@ -288,6 +293,7 @@ const ChatPage = () => {
     return (
         <div className="flex h-screen bg-background text-secondary overflow-hidden">
              {/* Sidebar Overlay for Mobile */}
+             {/* Use AnimatePresence FROM FRAMER MOTION HERE */}
              <AnimatePresence>
                  {isMobile && isMobileSidebarOpen && (
                      <motion.div
@@ -313,16 +319,14 @@ const ChatPage = () => {
                      // Mobile Visibility Logic
                      isMobile && (isMobileSidebarOpen ? 'translate-x-0 shadow-lg' : '-translate-x-full') // Slide in/out on mobile
                  )}
-                 // No framer-motion transition needed if using CSS transitions
              >
-                 {/* Pass correct visibility flags to Sidebar component */}
                   <Sidebar
-                      isExpanded={!isMobile && isDesktopSidebarExpanded} // Expanded only on desktop
-                      isMobileOpen={isMobile && isMobileSidebarOpen}    // Mobile open flag
+                      isExpanded={!isMobile && isDesktopSidebarExpanded}
+                      isMobileOpen={isMobile && isMobileSidebarOpen}
                       activePanel={activePanel}
                       onPanelChange={handlePanelChange}
                       openSharePopup={openSharePopup}
-                      onCloseMobileSidebar={closeMobileSidebar} // Pass close handler
+                      onCloseMobileSidebar={closeMobileSidebar}
                       onSelectThread={handleSelectThread}
                       onNewThread={handleCreateNewThread}
                       currentThreadId={currentThreadId}
@@ -341,12 +345,10 @@ const ChatPage = () => {
                         >
                             {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />}
                         </button>
-                        {/* Title centered using flex-grow and text-center */}
                         <h1 className="flex-grow text-center text-base font-semibold text-secondary truncate px-2">
                             Parthavi
                         </h1>
-                         {/* Placeholder div to balance the button */}
-                        <div className="w-8 h-8"></div> {/* Adjust size to match button */}
+                        <div className="w-8 h-8"></div> {/* Placeholder */}
                     </div>
                  )}
                  {/* --- End Mobile Header --- */}
