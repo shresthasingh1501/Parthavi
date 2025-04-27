@@ -91,7 +91,7 @@ const ChatPage = () => {
             if (chatContainerRef.current) {
                 chatContainerRef.current.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior });
             }
-        }, 60); // Use a consistent delay
+        }, 60);
     }, []);
 
     const handleCreateNewThread = useCallback(async (shouldSetActive: boolean = true): Promise<string | null> => {
@@ -134,7 +134,6 @@ const ChatPage = () => {
         const optimisticUserMsg: DisplayMessage = { id: tempUserMsgId, content: trimmedText, isUser: true, role: 'user', timestamp: "", created_at: new Date().toISOString() };
         const historyForApi = formatChatHistoryForGemini([...messages, optimisticUserMsg]);
         setMessages(prev => [...prev, optimisticUserMsg]);
-        // Scroll immediately after adding user message for better feel
         scrollToBottom('smooth');
 
         const userMessagePayload: MessagePayload = { thread_id: currentThread, content: trimmedText, role: 'user', user_id: userId };
@@ -143,7 +142,6 @@ const ChatPage = () => {
         const tempAiMsgId = `temp-ai-${Date.now()}`;
         const optimisticAiMsg: DisplayMessage = { id: tempAiMsgId, content: '', isUser: false, role: 'assistant', timestamp: "", created_at: new Date().toISOString() };
         setMessages(prev => [...prev, optimisticAiMsg]);
-        // No need to scroll here again, wait for AI response or error
 
         try {
             const requestPayload = { model: MODEL_NAME, contents: historyForApi, config: { responseMimeType: 'text/plain' } };
@@ -166,7 +164,6 @@ const ChatPage = () => {
                     }
                 }
             }
-            // Scroll *after* the entire stream has been processed
             scrollToBottom('smooth');
 
             if (accumulatedResponse) {
@@ -181,7 +178,7 @@ const ChatPage = () => {
             const errorMessage = aiError.message || "An unknown API error occurred.";
             setApiError(errorMessage);
             setMessages(prev => prev.map(msg => msg.id === tempAiMsgId ? { ...msg, content: `Error: ${errorMessage}` } : msg));
-            scrollToBottom('smooth'); // Scroll even on error
+            scrollToBottom('smooth');
         } finally { setIsResponding(false); }
     }, [currentThreadId, isResponding, session, messages, scrollToBottom]);
 
@@ -215,18 +212,10 @@ const ChatPage = () => {
      const handlePromptClick = useCallback((prompt: string) => {
         if (!currentThreadId) {
             handleCreateNewThread(false).then((newId) => {
-                if (newId) {
-                    setInputMessage(prompt);
-                    // Don't auto-send, let user press send button after clicking prompt
-                    // handleSendMessage(prompt);
-                }
+                if (newId) setInputMessage(prompt);
             });
-        } else {
-            setInputMessage(prompt);
-             // Don't auto-send here either
-            // handleSendMessage(prompt);
-        }
-    }, [currentThreadId, handleCreateNewThread]); // Removed handleSendMessage dep
+        } else { setInputMessage(prompt); }
+    }, [currentThreadId, handleCreateNewThread]);
     const handleInputChange = useCallback((value: string) => setInputMessage(value), []);
     const openSharePopup = () => setIsSharePopupOpen(true);
 
@@ -242,7 +231,7 @@ const ChatPage = () => {
         const initializeChat = async () => {
              setChatLoading(true); setMessages([]); setApiError(null);
              setCreateThreadError(null); setPlaceholderType(null);
-             isInitialMount.current = true; // Reset mount flag on load/thread change
+             isInitialMount.current = true;
 
             if (threadIdFromState) {
                 console.log("Load Effect: Loading thread from state:", threadIdFromState);
@@ -255,10 +244,9 @@ const ChatPage = () => {
                     setPlaceholderType(formatted.length === 0 ? 'new_thread' : null);
                     console.log("Load Effect: Messages loaded, count=", formatted.length, "Placeholder=", formatted.length === 0 ? 'new_thread' : null);
                     setChatLoading(false);
-                    // Use requestAnimationFrame to ensure DOM is updated before scrolling
                     requestAnimationFrame(() => {
-                         scrollToBottom('auto'); // Use 'auto' for instant scroll on load
-                         isInitialMount.current = false; // Allow smooth scroll for subsequent updates
+                         scrollToBottom('auto');
+                         isInitialMount.current = false;
                     });
                 } catch (error: any) {
                     console.error("Load Effect: Error loading messages:", error);
@@ -268,19 +256,18 @@ const ChatPage = () => {
                 }
             } else {
                 console.log("Load Effect: No thread in state, creating new one.");
-                await handleCreateNewThread(false); // This sets loading and placeholder
-                isInitialMount.current = false; // Allow smooth scroll after new thread placeholder shows
+                await handleCreateNewThread(false);
+                isInitialMount.current = false;
             }
         };
         initializeChat();
-    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]); // Added handleCreateNewThread dep back
+    }, [session?.user?.id, userLoading, location.state?.threadId, handleCreateNewThread]);
 
-    // This effect now ONLY handles subsequent smooth scrolls
     useEffect(() => {
-        if (!isInitialMount.current && messages.length > 0) { // Only scroll if not initial mount AND there are messages
+        if (!isInitialMount.current && messages.length > 0) {
              scrollToBottom('smooth');
         }
-    }, [messages, scrollToBottom]); // Depend only on messages and the stable scroll function
+    }, [messages, scrollToBottom]);
 
     useEffect(() => {
         if (isMobile && isMobileSidebarOpen) document.addEventListener('mousedown', handleClickOutside);
@@ -288,15 +275,13 @@ const ChatPage = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isMobile, isMobileSidebarOpen, handleClickOutside]);
 
-
     // --- Render Logic ---
     if (userLoading && !session) return <div className="flex items-center justify-center h-screen bg-background">Loading User...</div>;
 
-    const isLoading = chatLoading; // Simplified loading check
+    const isLoading = chatLoading;
     const showAnyPlaceholder = !isLoading && messages.length === 0 && !createThreadError && !apiError && (placeholderType !== null);
     const showAnyError = !isLoading && (!!createThreadError || !!apiError);
     const errorText = apiError || createThreadError || "";
-    // Show messages if NOT loading, NOT showing placeholder, and NOT showing error
     const showMessagesList = !isLoading && !showAnyPlaceholder && !showAnyError;
 
     console.log("Render Check: isLoading", isLoading, "showAnyPlaceholder", showAnyPlaceholder, "showAnyError", showAnyError, "showMessagesList", showMessagesList, "messages.length", messages.length, "placeholderType", placeholderType);
@@ -311,26 +296,24 @@ const ChatPage = () => {
             <main className="flex-1 flex flex-col h-full overflow-hidden relative">
                 {isMobile && ( <div className="flex items-center px-4 py-2 border-b border-gray-200/60 flex-shrink-0 h-14"> <button onClick={isMobileSidebarOpen ? closeMobileSidebar : openMobileSidebar} className="p-2 text-gray-600 hover:text-primary" aria-label={isMobileSidebarOpen ? "Close menu" : "Open menu"}> {isMobileSidebarOpen ? <X size={22} /> : <MenuIcon size={22} />} </button> <h1 className="flex-grow text-center text-base font-semibold text-secondary truncate px-2">Parthavi</h1> <div className="w-8 h-8"></div> </div> )}
 
-                {/* Messages Container - SCROLL AREA */}
-                 <div ref={chatContainerRef} className={clsx('flex-1 overflow-y-auto scroll-smooth min-h-0', 'px-4 md:px-10 lg:px-20 pt-4 pb-4')} >
-                    {/* Inner div for max-width and content alignment */}
-                    {/* Removed h-full here, let content define height */}
-                    <div className={clsx("max-w-3xl mx-auto w-full flex flex-col min-h-full", showMessagesList ? 'justify-end' : 'justify-center items-center')} >
-                        {/* Loader */}
+                 <div ref={chatContainerRef} className={clsx('flex-1 overflow-y-auto scroll-smooth min-h-0', 'px-4 md:px-10 lg:px-16 xl:px-20 pt-4 pb-4')} > {/* Adjusted padding */}
+                    {/* --- CHANGE: Increased max-width --- */}
+                    <div className={clsx("max-w-4xl mx-auto w-full flex flex-col min-h-full", showMessagesList ? 'justify-end' : 'justify-center items-center')} >
                         {isLoading && <div className="flex justify-center items-center p-10 text-gray-500 flex-1"> <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading... </div>}
-                        {/* Placeholders - Ensure they can center if flex-1 above exists */}
                         {showAnyPlaceholder && placeholderType === 'initial' && <div className="flex-1 flex items-center justify-center w-full"><InitialPlaceholder onPromptClick={handlePromptClick} /></div>}
                         {showAnyPlaceholder && placeholderType === 'new_thread' && <div className="flex-1 flex items-center justify-center w-full"><NewThreadPlaceholder onPromptClick={handlePromptClick} /></div>}
-                        {/* Error Display - Ensure it can center */}
                         {showAnyError && <div className="flex-1 flex items-center justify-center w-full"><div className='flex flex-col items-center text-center text-red-500 p-4 bg-red-50 rounded-lg max-w-md'><AlertCircle className="w-8 h-8 mb-3 text-red-400" /><p className="font-medium mb-1">Oops!</p><p className="text-sm">{errorText}</p></div></div>}
-                        {/* Messages List - Should stack from bottom naturally with justify-end */}
-                        {showMessagesList && <div className="w-full">{messages.map((m) => <ChatMessage key={m.id} message={m.content} isUser={m.isUser} />)}</div>}
+                        {/* --- Messages List Wrapper: Applies spacing between messages --- */}
+                        {showMessagesList && <div className="w-full space-y-2 md:space-y-3"> {/* Added space-y-* here */}
+                            {messages.map((m) => <ChatMessage key={m.id} message={m.content} isUser={m.isUser} />)}
+                        </div>}
                     </div>
                 </div>
 
-                {/* Input Area */}
-                <div className="px-4 md:px-10 lg:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
-                    <div className="max-w-3xl mx-auto">
+                {/* Input Area: Adjusted padding to match wider content */}
+                <div className="px-4 md:px-10 lg:px-16 xl:px-20 pb-6 pt-2 bg-background border-t border-gray-200/60 flex-shrink-0">
+                     {/* --- CHANGE: Increased max-width to match messages --- */}
+                    <div className="max-w-4xl mx-auto">
                         <ChatInput value={inputMessage} onChange={handleInputChange} onSendMessage={handleSendMessage} isResponding={isResponding || chatLoading || (!genAI && !API_KEY)} />
                          {!genAI && !API_KEY && ( <p className="text-xs text-red-500 mt-2 text-center px-4"> AI functionality is disabled. Missing API Key. </p> )}
                     </div>
