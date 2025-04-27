@@ -2,11 +2,7 @@
 import React from 'react';
 import { clsx } from 'clsx';
 import {
-  Sparkles,
-  MessageSquare,
-  User,
-  ChevronLeft,
-  ChevronRight // Import ChevronRight for expand toggle (optional)
+  Sparkles, MessageSquare, User, ChevronLeft
 } from 'lucide-react';
 import DiscoverPanel from '../sidebar_panels/DiscoverPanel';
 import ThreadsPanelSidebar from '../sidebar_panels/ThreadsPanelSidebar';
@@ -21,10 +17,9 @@ interface SidebarProps {
   activePanel: ActivePanelType; // Which panel content is selected?
   onPanelChange: (panel: ActivePanelType) => void; // Handles icon clicks (toggle/switch)
   openSharePopup: () => void;
-  onCloseMobileSidebar: () => void; // Handles explicit mobile close
-  // Props specifically for ThreadsPanelSidebar
+  onCloseMobileSidebar: () => void; // Specific handler to close mobile sidebar
   onSelectThread: (threadId: string) => void;
-  onNewThread: () => Promise<void>;
+  onNewThread: () => Promise<void>; // Changed return type
   currentThreadId: string | null;
 }
 
@@ -34,7 +29,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     activePanel,
     onPanelChange,
     openSharePopup,
-    onCloseMobileSidebar,
+    onCloseMobileSidebar, // Use this specific prop
     onSelectThread,
     onNewThread,
     currentThreadId,
@@ -47,16 +42,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     { name: 'profile', icon: User, label: 'Profile' }
   ];
 
-  // Determine if the panel content area should be rendered and animated
-  const showPanelContent = isMobile ? isMobileOpen : isExpanded;
+  // Determine if the panel content area should be rendered (separate from icon column)
+  // On Mobile: Render only if mobile sidebar is open AND a panel is selected
+  // On Desktop: Render only if desktop sidebar is expanded AND a panel is selected
+  const showPanelContent = (isMobile ? isMobileOpen : isExpanded) && activePanel !== null;
 
   const renderPanelContent = () => {
-    if (!showPanelContent || !activePanel) { // Only render if expanded/open AND a panel is active
-        return null;
-    }
+    // Guard clause: Don't render if panel shouldn't be shown
+    if (!showPanelContent) return null;
 
     switch (activePanel) {
       case 'discover':
+        // Pass the specific close handler to panels that need it
         return <DiscoverPanel onCloseMobileSidebar={onCloseMobileSidebar} />;
       case 'threads':
         return (
@@ -70,7 +67,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       case 'profile':
         return <ProfilePanel openSharePopup={openSharePopup} onCloseMobileSidebar={onCloseMobileSidebar} />;
       default:
-        return null; // Should not happen if activePanel is managed correctly
+        return null;
     }
   };
 
@@ -78,41 +75,31 @@ const Sidebar: React.FC<SidebarProps> = ({
      <div
       className={clsx(
         // Height, flex, border consistent
-        "h-screen flex flex-shrink-0 border-r border-gray-200/80",
-        // Width is now controlled by the parent motion.div in ChatPage.tsx
+        "h-full flex flex-shrink-0 border-r border-gray-200/80 overflow-hidden", // Added overflow-hidden
+        // Width is controlled by the parent motion.div in ChatPage.tsx
       )}
     >
-        {/* Icon Buttons Column */}
+        {/* --- Icon Buttons Column --- */}
+        {/* Fixed width, always visible */}
         <div className="w-16 md:w-24 h-full flex flex-col items-center py-4 space-y-1 flex-shrink-0 border-r border-gray-200/80 z-10 bg-gray-50/30">
-            {/* Mobile Close Button (using the actual close handler) */}
+            {/* Mobile Close Button (Only shown when mobile sidebar is open) */}
             {isMobile && isMobileOpen && (
                  <button
-                     onClick={onCloseMobileSidebar} // Use the specific close handler
+                     onClick={onCloseMobileSidebar} // Use the explicit close handler
                      className="p-2 mb-4 text-gray-600 hover:text-primary"
                      aria-label="Close menu"
                  >
                     <ChevronLeft size={20} strokeWidth={2.5}/>
                  </button>
             )}
-             {/* Placeholder for alignment when mobile is closed */}
-            {isMobile && !isMobileOpen && <div className="w-12 h-12 mb-4 md:mb-1"></div>}
-
-             {/* Desktop Toggle Button (Optional - if you want an explicit expand/collapse button) */}
-             {/* {!isMobile && (
-                 <button
-                     onClick={() => onPanelChange(activePanel)} // Reuse panel change logic for toggle
-                     className="p-2 mb-4 text-gray-600 hover:text-primary"
-                     aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
-                 >
-                     {isExpanded ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-                 </button>
-             )} */}
+            {/* Placeholder for alignment when mobile close button isn't shown */}
+            {(!isMobile || !isMobileOpen) && <div className="h-[52px] mb-0 md:mb-1"></div>}
 
 
             {/* Menu Items */}
             {menuItems.map((item) => {
                  const Icon = item.icon;
-                 // An icon is considered "active" if its panel is the one currently selected *AND* the panel area is visible
+                 // An icon is considered "active" if its panel is the one currently selected AND the panel area is visible
                  const isActive = activePanel === item.name && showPanelContent;
                  // An icon is considered "selected" if its panel is the one chosen, even if the panel area is collapsed/closed
                  const isSelected = activePanel === item.name;
@@ -120,20 +107,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                 return (
                     <button
                         key={item.name}
-                        // Use onPanelChange for toggling/switching
-                        onClick={() => onPanelChange(item.name)}
+                        onClick={() => onPanelChange(item.name)} // Use onPanelChange for toggling/switching
                         className={clsx(
                            "flex flex-col items-center justify-center py-2 rounded-lg text-secondary transition-colors w-14 md:w-[76px] h-auto min-h-[56px] md:min-h-[60px]",
-                           // Style based on selection/activity
-                           isActive ? 'bg-white shadow-sm' : (isSelected ? 'bg-gray-100' : 'hover:bg-gray-100'), // Highlight if selected, more if active
+                           isActive ? 'bg-white shadow-sm' : (isSelected ? 'bg-gray-100' : 'hover:bg-gray-100'),
                         )}
                         title={item.label}
                     >
-                        {/* Icon styling emphasizes selection */}
                         <Icon size={20} strokeWidth={isSelected ? 2.5 : 2} className={clsx(isSelected ? 'text-primary' : 'text-gray-600')} />
                         <span className={clsx(
                             "text-[10px] md:text-[11px] font-medium mt-1",
-                             isSelected ? 'text-primary' : 'text-gray-700' // Text color matches selection
+                             isSelected ? 'text-primary' : 'text-gray-700'
                             )}>
                             {item.label}
                         </span>
@@ -142,18 +126,23 @@ const Sidebar: React.FC<SidebarProps> = ({
             })}
         </div>
 
-        {/* Expanded Panel Content Area */}
-        {/* Use motion for smooth fade-in/out of the content */}
-        <motion.div
-            className="flex-1 flex flex-col overflow-hidden" // Takes remaining space within parent container
-            initial={{ opacity: 0 }}
-            // Animate opacity based on whether the panel content should be shown
-            animate={{ opacity: showPanelContent ? 1 : 0 }}
-            transition={{ duration: 0.2, delay: showPanelContent ? 0.1 : 0 }}
-        >
-             {renderPanelContent()}
-        </motion.div>
-
+        {/* --- Expanded Panel Content Area --- */}
+        {/* This div takes the remaining space when shown */}
+        {/* Use AnimatePresence for smooth entry/exit based on showPanelContent */}
+        <AnimatePresence initial={false}>
+            {showPanelContent && (
+                <motion.div
+                    key={activePanel} // Animate based on which panel is active
+                    className="flex-1 flex flex-col overflow-hidden bg-background" // Takes remaining space, ensures bg
+                    initial={{ opacity: 0, x: -20 }} // Start slightly off-screen left and faded
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20, transition: { duration: 0.15 } }} // Faster exit
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                >
+                    {renderPanelContent()}
+                </motion.div>
+            )}
+        </AnimatePresence>
     </div>
   );
 };
